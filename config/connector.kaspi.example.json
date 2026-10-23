@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "verified": false,
+  "login_url": "https://pay.kaspi.kz/",
+  "allowed_origins": ["https://pay.kaspi.kz"],
+  "payment_origins": ["https://kaspi.kz", "https://qr.kaspi.kz"],
+  "ready": "",
+  "account": "",
+  "phone": {
+    "url": "",
+    "amount": "",
+    "phone": "",
+    "description": "",
+    "reference": "",
+    "submit": "",
+    "result": "",
+    "provider_id": ""
+  },
+  "qr": {
+    "url": "",
+    "amount": "",
+    "reference": "",
+    "submit": "",
+    "result": "",
+    "provider_id": "",
+    "qr": "",
+    "payment_link": "",
+    "expires_at": ""
+  },
+  "status": {
+    "url_template": "",
+    "ready": "",
+    "provider_id": "",
+    "amount": "",
+    "currency": "",
+    "reference": "",
+    "state": "",
+    "states": {"paid": "", "pending": "", "declined": "", "expired": ""}
+  }
+}

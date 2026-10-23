@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "verified": false,
+  "app_package": "",
+  "app_activity": "",
+  "ready": {
+    "using": "id",
+    "value": ""
+  },
+  "account": {
+    "using": "id",
+    "value": ""
+  },
+  "home": [],
+  "phone": {
+    "navigation": [],
+    "amount": {
+      "using": "id",
+      "value": ""
+    },
+    "reference": {
+      "using": "id",
+      "value": ""
+    },
+    "submit": {
+      "using": "id",
+      "value": ""
+    },
+    "result": {
+      "using": "id",
+      "value": ""
+    },
+    "provider_id": {
+      "using": "id",
+      "value": ""
+    },
+    "phone": {
+      "using": "id",
+      "value": ""
+    }
+  },
+  "qr": {
+    "navigation": [],
+    "amount": {
+      "using": "id",
+      "value": ""
+    },
+    "reference": {
+      "using": "id",
+      "value": ""
+    },
+    "submit": {
+      "using": "id",
+      "value": ""
+    },
+    "result": {
+      "using": "id",
+      "value": ""
+    },
+    "provider_id": {
+      "using": "id",
+      "value": ""
+    },
+    "qr": {
+      "using": "id",
+      "value": ""
+    },
+    "live_status": {
+      "provider_id": {
+        "using": "id",
+        "value": ""
+      },
+      "amount": {
+        "using": "id",
+        "value": ""
+      },
+      "currency": {
+        "using": "id",
+        "value": ""
+      },
+      "reference": {
+        "using": "id",
+        "value": ""
+      },
+      "state": {
+        "using": "id",
+        "value": ""
+      },
+      "states": {
+        "paid": "",
+        "pending": "",
+        "declined": "",
+        "expired": ""
+      }
+    }
+  },
+  "payment_origins": [
+    "https://kaspi.kz",
+    "https://qr.kaspi.kz"
+  ],
+  "history": {
+    "navigation": [],
+    "search": {
+      "using": "id",
+      "value": ""
+    },
+    "open_result": {
+      "using": "id",
+      "value": ""
+    },
+    "details": {
+      "provider_id": {
+        "using": "id",
+        "value": ""
+      },
+      "amount": {
+        "using": "id",
+        "value": ""
+      },
+      "currency": {
+        "using": "id",
+        "value": ""
+      },
+      "reference": {
+        "using": "id",
+        "value": ""
+      },
+      "state": {
+        "using": "id",
+        "value": ""
+      },
+      "states": {
+        "paid": "",
+        "pending": "",
+        "declined": "",
+        "expired": ""
+      }
+    }
+  }
+}

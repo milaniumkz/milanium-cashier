@@ -1,0 +1,20 @@
+# Linux host deployment. Appium and Android emulators run on the same host,
+# bound to loopback. Do not expose ports 4723, 5037, emulator or system ports.
+services:
+  cashier:
+    build: .
+    init: true
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    environment:
+      HOST: 127.0.0.1
+      PORT: 3080
+      DATA_DIR: /app/data
+      APPIUM_URL: http://127.0.0.1:4723
+      CONNECTOR_CONFIG: /app/config/android.live.json
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    stop_grace_period: 65s

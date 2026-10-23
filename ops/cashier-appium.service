@@ -1,0 +1,18 @@
+[Unit]
+Description=Local Appium for dedicated cashier Androids
+After=network-online.target
+
+[Service]
+Type=simple
+User=cashier
+Group=cashier
+WorkingDirectory=/opt/android-cashier
+EnvironmentFile=/opt/android-cashier/.env
+ExecStart=/usr/local/bin/appium --address 127.0.0.1 --port 4723 --log-level warn
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

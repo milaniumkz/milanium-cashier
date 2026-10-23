@@ -1,0 +1,19 @@
+[Unit]
+Description=Android Cashier API and worker
+After=network-online.target cashier-appium.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cashier
+Group=cashier
+WorkingDirectory=/opt/android-cashier
+EnvironmentFile=/opt/android-cashier/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=65
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
