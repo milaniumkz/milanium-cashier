@@ -11,6 +11,13 @@ if [[ "$mode" == inspect ]]; then
   ss -ltnp
   command -v node || true
   command -v nginx || true
+  command -v certbot || true
+  if command -v nginx >/dev/null; then
+    nginx -T 2>/dev/null | awk '/^[[:space:]]*(server_name|listen|ssl_certificate|ssl_certificate_key|root|alias|location|include)[[:space:]]/ {print}' || true
+  fi
+  if [[ -d /etc/letsencrypt/renewal ]]; then
+    grep -hE '^(authenticator|webroot_path)[[:space:]]*=' /etc/letsencrypt/renewal/*.conf || true
+  fi
   exit 0
 fi
 [[ "$mode" == deploy || "$mode" == prepare ]] || { echo 'Unknown operation' >&2; exit 1; }
