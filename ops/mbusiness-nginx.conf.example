@@ -9,6 +9,11 @@ events { worker_connections 256; }
 http {
     access_log /srv/mbusiness/proxy/access.log;
     client_max_body_size 32k;
+    client_body_temp_path /srv/mbusiness/proxy/client-temp;
+    proxy_temp_path /srv/mbusiness/proxy/proxy-temp;
+    fastcgi_temp_path /srv/mbusiness/proxy/fastcgi-temp;
+    uwsgi_temp_path /srv/mbusiness/proxy/uwsgi-temp;
+    scgi_temp_path /srv/mbusiness/proxy/scgi-temp;
     server {
         listen 8443 ssl;
         server_name mbusiness.example.kz;

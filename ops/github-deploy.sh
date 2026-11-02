@@ -223,7 +223,16 @@ if [[ "$mode" == prepare ]]; then
   exit 0
 fi
 systemctl restart mbusiness-proxy.service
-curl --fail --silent --show-error --resolve "$domain:$proxy_port:127.0.0.1" "$base_url/healthz"
+proxy_ready=false
+for attempt in {1..20};do
+  if systemctl is-active --quiet mbusiness-proxy.service && curl --fail --silent --resolve "$domain:$proxy_port:127.0.0.1" --connect-timeout 2 --max-time 3 "$base_url/healthz";then proxy_ready=true;break;fi
+  sleep 1
+done
+if [[ "$proxy_ready" != true ]];then
+  journalctl -u mbusiness-proxy.service -n 30 --no-pager
+  echo 'Own HTTPS proxy did not become ready; MTaxi service was not restarted.' >&2
+  exit 1
+fi
 # Renewal is isolated to MBusiness's ACME account, certificate and proxy.
 install -m 0700 "$release_dir/ops/github-renew-tls.sh" "$root/renew-tls.sh"
 certbot_bin=$(command -v certbot)
