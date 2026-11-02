@@ -32,17 +32,18 @@ function renderCompanies() {
   if(!data.merchants.length){target.append(empty('Нет подключённых компаний','Создайте компанию, чтобы получить ключ для её приложения.','Добавить компанию',()=>$('#merchant-dialog').showModal()));return;}
   for(const m of data.merchants){
     const card=el('article',undefined,'company-card'), top=el('div',undefined,'card-top');top.append(el('h3',m.name),badge(m.state));
-    card.append(top,el('p',m.device_udid ? `Android: ${m.device_udid}` : 'Android не привязан','muted'),el('p','Идентификатор компании','muted'),el('code',m.id),el('p',`Кабинет кассира: ${m.account_label}`),el('p',m.webhook_url?`Webhook: ${m.webhook_url}`:'Webhook не настроен','muted'));
+    card.append(top,el('p',data.mode==='kaspi' ? 'Серверное подключение Kaspi' : m.device_udid ? `Android: ${m.device_udid}` : 'Android не привязан','muted'),el('p','Идентификатор компании','muted'),el('code',m.id),el('p',`Кабинет кассира: ${m.account_label}`),el('p',m.api_ip?`IP сервера API: ${m.api_ip}`:'API заблокирован: IP сервера не указан','muted'),el('p',m.webhook_url?`Webhook: ${m.webhook_url}`:'Webhook не настроен','muted'));
     const actions=el('div',undefined,'actions');
     const connect=el('button','Подключение','secondary');connect.onclick=()=>{
+      if(data.mode==='kaspi'){openKaspi(m);return;}
       const content=el('div');content.append(el('p',data.mode==='sandbox'?'Тестовая касса уже готова. Счета не отправляются в Kaspi.':'Запустите команду на доверенном компьютере с доступом к данным сервиса. Войдите в установленное приложение на выделенном Android, затем подтвердите подключение в терминале.'));
       if(data.mode!=='sandbox')content.append(el('pre',`npm run connect -- ${m.id}`));
       info('Сессия кассира',content);
     };
     const rotate=el('button','Заменить API-ключ','secondary');rotate.onclick=async()=>{if(!confirm('Старый API-ключ перестанет работать. Создать новый?'))return;try{const r=await post(`/admin/merchants/${m.id}/key`);showSecrets(r);}catch(e){toast(e.message);}};
     const webhook=el('button','Webhook','secondary');webhook.onclick=async()=>{const url=prompt('HTTPS-адрес для уведомлений. Оставьте пустым для отключения.',m.webhook_url);if(url===null)return;try{await request(`/admin/merchants/${m.id}/webhook`,{method:'PATCH',body:JSON.stringify({webhook_url:url.trim()})});await refresh();toast('Адрес уведомлений сохранён');}catch(e){toast(e.message);}};
-    actions.append(connect,rotate,webhook);if(data.mode==='android'&&m.device_udid){const view=el('button','Открыть Android','primary');view.onclick=()=>openAndroid(m.id);actions.prepend(view);}
-    if(data.mode==='android'&&m.state!=='disconnected'){const b=el('button','Приостановить','secondary');b.onclick=async()=>{if(!confirm('Приостановить робота? Аккаунт в приложении Android останется авторизованным.'))return;try{await post(`/admin/merchants/${m.id}/disconnect`);await refresh();}catch(e){toast(e.message);}};actions.append(b);}
+    const server=el('button','IP сервера API','secondary');server.onclick=async()=>{const ip=prompt('Один публичный исходящий IP backend-сервера компании (выдаст новый API-ключ):',m.api_ip||'');if(!ip)return;if(!confirm('Предыдущий API-ключ перестанет работать. Продолжить?'))return;try{showSecrets(await post(`/admin/merchants/${m.id}/api-server`,{ip:ip.trim()}));await refresh();}catch(e){toast(e.message);}};actions.append(connect,server,rotate,webhook);if(data.mode==='android'&&m.device_udid){const view=el('button','Открыть Android','primary');view.onclick=()=>openAndroid(m.id);actions.prepend(view);}
+    if(data.mode!=='sandbox'&&m.state!=='disconnected'){const b=el('button','Приостановить','secondary');b.onclick=async()=>{if(!confirm(data.mode==='kaspi'?'Отключить серверную сессию Kaspi? Для подключения потребуется новый вход.':'Приостановить робота? Аккаунт в приложении Android останется авторизованным.'))return;try{await post(`/admin/merchants/${m.id}/disconnect`);await refresh();}catch(e){toast(e.message);}};actions.append(b);}
     card.append(actions);target.append(card);
   }
 }
@@ -55,8 +56,8 @@ async function refresh(){
   if(loading)return;loading=true;
   try {
     data=await request('/admin/overview');$('#login').hidden=true;$('#workspace').hidden=false;
-    const sandbox=data.mode==='sandbox';$('#mode-banner').textContent=sandbox?'ТЕСТОВЫЙ РЕЖИМ · Счета, QR и подтверждения имитируются. Деньги не списываются.':data.capabilities.configured?'Android-кассир · Перед отправкой проверяется компания и сумма операции.':`Подключение Kaspi не настроено. Отправка реальных счетов отключена (${data.capabilities.reason}).`;
-    $('#mode-banner').classList.toggle('live',!sandbox);$('#sidebar-mode').textContent=sandbox?'SANDBOX / ТЕСТОВАЯ КАССА':'ANDROID-КАССИР';
+    const sandbox=data.mode==='sandbox';$('#mode-banner').textContent=sandbox?'ТЕСТОВЫЙ РЕЖИМ · Счета, QR и подтверждения имитируются. Деньги не списываются.':data.capabilities.configured?(data.mode==='kaspi'?'Kaspi · Серверное подключение. Реальные операции включены.':'Android-кассир · Перед отправкой проверяется компания и сумма операции.'):`Подключение Kaspi не настроено. Отправка реальных счетов отключена (${data.capabilities.reason}).`;
+    $('#mode-banner').classList.toggle('live',!sandbox);$('#sidebar-mode').textContent=sandbox?'SANDBOX / ТЕСТОВАЯ КАССА':data.mode==='kaspi'?'KASPI / СЕРВЕР':'ANDROID-КАССИР';
     const stat=s=>data.stats.find(x=>x.status===s)?.count||0;
     $('#stat-paid').textContent=money(data.stats.find(x=>x.status==='paid')?.amount);$('#stat-count').textContent=`${stat('paid')} платежей`;
     $('#stat-pending').textContent=stat('pending');$('#stat-review').textContent=stat('unknown')+stat('requires_auth')+stat('failed');$('#stat-merchants').textContent=data.merchants.length;
@@ -65,10 +66,10 @@ async function refresh(){
   }catch(e){if(e.status===401){$('#login').hidden=false;$('#workspace').hidden=true;clearInterval(timer);timer=null;}else toast(e.message);}
   finally{loading=false;}
 }
-function switchView(view){currentView=view;document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==`view-${view}`);document.querySelectorAll('[data-view]').forEach(e=>e.classList.toggle('active',e.dataset.view===view));$('#breadcrumb').textContent=`Рабочее пространство / ${ {payments:'Платежи',companies:'Компании',events:'Уведомления',api:'Интеграция'}[view] }`;if(view==='companies')renderCompanies();if(view==='events')renderEvents();}
+function switchView(view){currentView=view;document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==`view-${view}`);document.querySelectorAll('[data-view]').forEach(e=>e.classList.toggle('active',e.dataset.view===view));$('#breadcrumb').textContent=`Рабочее пространство / ${ {payments:'Платежи',companies:'Компании',events:'Уведомления',api:'Интеграция',billing:'Баланс и заявки'}[view] }`;if(view==='companies')renderCompanies();if(view==='events')renderEvents();if(view==='billing')renderBilling();}
 function info(title,content){$('#info-title').textContent=title;$('#info-content').replaceChildren(content);$('#info-dialog').showModal();}
 function showSecrets(r){const c=el('div');c.append(el('p','Сохраните ключи сейчас. Повторно посмотреть их в кабинете нельзя.'));for(const [label,value] of [['API-ключ',r.api_key],['Секрет webhook',r.webhook_secret]])if(value){c.append(el('h3',label),el('pre',value));const b=el('button','Копировать','secondary');b.onclick=()=>navigator.clipboard.writeText(value).then(()=>toast('Скопировано')).catch(()=>toast('Выделите и скопируйте ключ вручную.'));c.append(b);}info('Ключи подключения',c);}
-function openInvoice(){if(!data.merchants.length){$('#merchant-dialog').showModal();return;}const f=$('#invoice-form');f.reset();f.querySelector('.form-error').textContent='';$('#invoice-merchant').replaceChildren(...data.merchants.map(m=>{const o=el('option',m.name);o.value=m.id;return o;}));f.elements.order_id.value=`order-${Date.now()}`;f.dataset.idem=crypto.randomUUID();$('#phone-label').hidden=false;f.elements.customer_phone.required=true;$('#invoice-mode-note').textContent=data.mode==='sandbox'?'Будет создан тестовый счёт. Уведомление в Kaspi не отправляется.':'Будет отправлен реальный запрос через приложение кассира на выделенном Android.';$('#invoice-dialog').showModal();}
+function openInvoice(){if(!data.merchants.length){$('#merchant-dialog').showModal();return;}const f=$('#invoice-form');f.reset();f.querySelector('.form-error').textContent='';$('#invoice-merchant').replaceChildren(...data.merchants.map(m=>{const o=el('option',m.name);o.value=m.id;return o;}));f.elements.order_id.value=`order-${Date.now()}`;f.dataset.idem=crypto.randomUUID();$('#phone-label').hidden=false;f.elements.customer_phone.required=true;$('#invoice-mode-note').textContent=data.mode==='sandbox'?'Будет создан тестовый счёт. Уведомление в Kaspi не отправляется.':data.mode==='kaspi'?'Будет отправлен реальный запрос в Kaspi через сервер.':'Будет отправлен реальный запрос через приложение кассира на выделенном Android.';$('#invoice-dialog').showModal();}
 async function showInvoice(id){
   selectedInvoice=id;const i=data.invoices.find(v=>v.id===id);if(!i)return;
   $('#detail-title').textContent=`Заказ № ${i.order_id}`;const c=$('#detail-content');c.replaceChildren(badge(i.status));
@@ -119,3 +120,38 @@ $('#android-text-form').onsubmit=e=>{e.preventDefault();const input=$('#android-
 $('#android-back').onclick=()=>androidInput({action:'back'});$('#android-refresh').onclick=androidScreen;
 $('#android-resume').onclick=async()=>{try{await androidSerial(()=>post(`/admin/android/${androidId}/resume`));$('#android-dialog').close();await refresh();toast('Кассир проверен. Робот запущен.');}catch(e){$('#android-error').textContent=e.message;}};
 $('#android-dialog').addEventListener('close',()=>{clearInterval(androidTimer);$('#android-text').value='';$('#android-screen').removeAttribute('src');if(androidObjectUrl)URL.revokeObjectURL(androidObjectUrl);androidObjectUrl=null;});
+
+function openKaspi(merchant){
+  const content=el('div'),note=el('p','Укажите телефон кассира. Название кабинета должно точно совпадать с компанией в Kaspi. Код SMS вводится здесь и не сохраняется в браузере.');
+  const form=el('form'),input=el('input'),button=el('button','Получить SMS','primary'),error=el('p','','form-error');
+  input.type='tel';input.placeholder='+77001234567';input.required=true;input.autocomplete='off';button.type='submit';
+  form.append(input,button,error);content.append(note,form);let step='start';
+  form.onsubmit=async e=>{e.preventDefault();button.disabled=true;error.textContent='';const value=input.value;input.value='';
+    try{await post(`/admin/kaspi/${merchant.id}/${step}`,step==='start'?{phone:value}:{otp:value});
+      if(step==='start'){step='verify';input.type='password';input.inputMode='numeric';input.placeholder='Код SMS';button.textContent='Подключить';note.textContent='Введите код SMS. Сессия будет храниться только на сервере.';input.focus();}
+      else{$('#info-dialog').close();await refresh();toast('Кассир подключён');}
+    }catch(e){error.textContent=e.message;}finally{button.disabled=false;}
+  };
+  info('Подключение Kaspi',content);$('#info-dialog').addEventListener('close',()=>{input.value='';},{once:true});
+}
+
+async function renderBilling(){
+ try{const result=await request('/admin/topups');const target=$('#billing-list');target.replaceChildren();
+ if(!result.data.length)target.append(empty('Заявок пока нет','Заявки компаний на пополнение появятся здесь.'));
+ else target.append(table(['Компания / заявка','Сумма','Дата','Статус','Действия'],result.data.map(t=>{
+ const row=el('tr'),company=el('td',t.name),actions=el('td');company.append(el('small',t.id));
+ if(t.status==='pending')for(const [decision,label] of [['approved','Подтвердить перевод'],['rejected','Отклонить']]){const b=el('button',label,'secondary');b.onclick=async()=>{
+ let bank_reference;if(decision==='approved'){bank_reference=prompt('После проверки оплаты в банке укажите уникальный идентификатор перевода:');if(!bank_reference)return;}
+ if(!confirm(decision==='approved'?`Зачислить ${t.amount} ₸ компании ${t.name}?`:'Отклонить заявку?'))return;
+ b.disabled=true;try{await post(`/admin/topups/${t.id}/review`,{decision,...(bank_reference?{bank_reference}: {})});await renderBilling();}catch(e){toast(e.message);}finally{b.disabled=false;}};actions.append(b);}
+ row.append(company,el('td',money(t.amount)),el('td',date(t.created_at)),el('td',({pending:'Ожидает проверки',approved:'Зачислено',rejected:'Отклонено'})[t.status]),actions);return row;
+ })));
+ const contracts=$('#contract-list');contracts.replaceChildren();
+ for(const item of result.individual){const card=el('article',undefined,'company-card');card.append(el('h3',item.name),el('pre',item.detail));const b=el('button','Предложить тариф','primary');b.onclick=async()=>{
+ const daily_limit=Number(prompt('Дневной лимит (больше 700):','1000'));if(!Number.isInteger(daily_limit)||daily_limit<701)return;
+ const price=Number(prompt('Стоимость за календарный месяц, ₸:'));if(!Number.isInteger(price)||price<1)return;
+ try{await post(`/admin/merchants/${item.merchant_id}/contract`,{daily_limit,price});toast('Предложение доступно компании в разделе тарифов.');}catch(e){toast(e.message);}
+ };card.append(b);contracts.append(card);}
+ }catch(e){toast(e.message);}
+}
+$('#refresh-billing').onclick=renderBilling;

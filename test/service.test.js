@@ -14,10 +14,11 @@ import { validateWebhookUrl, isPublicIPv4, Outbox } from '../src/webhooks.js';
 import { verifyCashierWebhook } from '../examples/verify-webhook.mjs';
 
 function config(mode='sandbox') { return { mode, production:false, key:randomBytes(32), adminPassword:randomBytes(24).toString('base64url'), baseUrl:'http://127.0.0.1:3080', dataDir:mkdtempSync(path.join(tmpdir(),'cashier-')), pollMs:1000, liveEnabled:false, connectorPath:'/nonexistent', webhookOrigins:['https://example.com'] }; }
-function merchant(store, name='Тестовая компания') { return store.createMerchant({name,account_label:name,webhook_url:''}); }
+function merchant(store, name='Тестовая компания') { const result=store.createMerchant({name,account_label:name,webhook_url:''});return {...result,...store.bindApiServer(result.merchant.id,'93.184.216.34')}; }
 const payload = (overrides={}) => invoiceSchema.parse({order_id:'test-1001',amount:15000,currency:'KZT',method:'phone',customer_phone:'+77001234567',...overrides});
 async function fixture(t, mode='sandbox', driver) {
   const c=config(mode), app=await buildApp(c,{logger:false,background:false,driver});
+  const inject=app.inject.bind(app);app.inject=options=>inject({remoteAddress:'93.184.216.34',...options});
   t.after(async()=>{await app.close();rmSync(c.dataDir,{recursive:true,force:true});});
   return {c,app,...app.services};
 }

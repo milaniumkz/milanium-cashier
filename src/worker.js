@@ -35,10 +35,10 @@ export class Worker {
     if (this.stopping) return;
     // Poll first so a busy stream of new orders cannot starve confirmations.
     for (let n = 0; n < 4 && this.busy.size < 4; n++) {
-      const p = this.store.nextPoll(this.busy, i=>(this.config.mode!=='android'||this.store.merchant(i.merchant_id).state==='connected')&&(!this.driver.canPoll||this.driver.canPoll(i)));
+      const p = this.store.nextPoll(this.busy, i=>(this.config.mode==='sandbox'||this.store.merchant(i.merchant_id).state==='connected')&&(!this.driver.canPoll||this.driver.canPoll(i)));
       if (p) this.launch(p, this.poll);
       else {
-        const disconnected=this.config.mode==='android'?this.store.merchants().filter(m=>m.state!=='connected').map(m=>m.id):[];
+        const disconnected=this.config.mode!=='sandbox'?this.store.merchants().filter(m=>m.state!=='connected').map(m=>m.id):[];
         const blocked=new Set([...this.busy,...this.store.blockedMerchants(),...(this.driver.blockedMerchants?.()||[]),...disconnected]);
         const i = this.store.nextJob(blocked);
         if (!i) break;

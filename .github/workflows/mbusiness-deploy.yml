@@ -1,0 +1,80 @@
+name: MBusiness — isolated deployment
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Inspect performs read-only host checks; deploy requires a dedicated HTTPS domain and TLS files.
+        type: choice
+        options: [inspect, deploy]
+        default: inspect
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: mbusiness-production
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:http
+      - name: Validate deployment shell
+        run: bash -n ops/github-deploy.sh
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: mbusiness-production
+    env:
+      SSH_HOST: ${{ vars.MBUSINESS_SSH_HOST || '89.126.192.185' }}
+      SSH_USER: ${{ vars.MBUSINESS_SSH_USER || 'root' }}
+      SSH_PORT: ${{ vars.MBUSINESS_SSH_PORT || '22' }}
+      SSH_FINGERPRINT: ${{ vars.MBUSINESS_SSH_FINGERPRINT || 'SHA256:+Tocz2KkwW2hYTRerF6SA4DwanAyaFcQa3nrl+M2dcg' }}
+      PUBLIC_BASE_URL: ${{ vars.MBUSINESS_PUBLIC_BASE_URL }}
+      OPERATION: ${{ inputs.operation }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH client helper on the Actions runner only
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Verify SSH host identity and run isolated operation
+        env:
+          SSHPASS: ${{ secrets.MBUSINESS_SSH_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$SSHPASS" ]] || { echo 'Set MBUSINESS_SSH_PASSWORD in environment mbusiness-production.'; exit 1; }
+          [[ "$SSH_HOST" =~ ^[0-9.]+$ && "$SSH_PORT" =~ ^[0-9]+$ && "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 1
+          known="$RUNNER_TEMP/mbusiness_known_hosts"
+          ssh-keyscan -T 10 -p "$SSH_PORT" -t ecdsa "$SSH_HOST" > "$known" 2>/dev/null
+          fingerprint=$(ssh-keygen -lf "$known" -E sha256 | awk '{print $2}')
+          [[ "$fingerprint" == "$SSH_FINGERPRINT" ]] || { echo 'SSH host fingerprint mismatch; verify in hosting console.'; exit 1; }
+          chmod 600 "$known"
+          options=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" -o ConnectTimeout=15 -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1)
+          remote_dir="/root/mbusiness-upload-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          sshpass -e ssh -p "$SSH_PORT" "${options[@]}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir '$remote_dir'"
+          remote_script="$remote_dir/bootstrap.sh"
+          sshpass -e scp -P "$SSH_PORT" "${options[@]}" ops/github-deploy.sh "$SSH_USER@$SSH_HOST:$remote_script"
+          if [[ "$OPERATION" == inspect ]]; then
+            printf -v command 'bash %q inspect' "$remote_script"
+          else
+            [[ -n "$PUBLIC_BASE_URL" ]] || { echo 'Set MBUSINESS_PUBLIC_BASE_URL and provision dedicated TLS before deployment.'; exit 1; }
+            archive="$RUNNER_TEMP/mbusiness-$GITHUB_SHA.tar.gz"
+            git archive --format=tar.gz -o "$archive" HEAD
+            checksum=$(sha256sum "$archive" | awk '{print $1}')
+            sshpass -e scp -P "$SSH_PORT" "${options[@]}" "$archive" "$SSH_USER@$SSH_HOST:$remote_dir/mbusiness-$GITHUB_SHA.tar.gz"
+            printf -v command 'bash %q deploy %q %q %q %q' "$remote_script" "$GITHUB_SHA" "$remote_dir/mbusiness-$GITHUB_SHA.tar.gz" "$checksum" "$PUBLIC_BASE_URL"
+          fi
+          sshpass -e ssh -p "$SSH_PORT" "${options[@]}" "$SSH_USER@$SSH_HOST" "$command"
+          if [[ "$OPERATION" == deploy ]]; then
+            curl --fail --silent --show-error --retry 3 --max-time 20 "$PUBLIC_BASE_URL/healthz"
+            curl --fail --silent --show-error --max-time 20 "$PUBLIC_BASE_URL/" | grep -Fq MBusiness
+          fi

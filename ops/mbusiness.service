@@ -1,0 +1,29 @@
+[Unit]
+Description=MBusiness isolated payment service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mbusiness
+Group=mbusiness
+WorkingDirectory=/srv/mbusiness/current
+ExecStart=/srv/mbusiness/runtime/bin/node --env-file=/srv/mbusiness/shared/.env /srv/mbusiness/current/src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=65
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/mbusiness/shared
+CPUQuota=50%
+MemoryMax=512M
+TasksMax=128
+Nice=10
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

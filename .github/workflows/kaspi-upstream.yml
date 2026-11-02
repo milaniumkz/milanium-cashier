@@ -1,0 +1,88 @@
+name: Kaspi — upstream updates
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/kaspi-upstream.json
+      - .github/workflows/kaspi-upstream.yml
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: kaspi-upstream-monitor
+  cancel-in-progress: false
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check upstream and maintain one review issue
+        uses: actions/github-script@v7
+        env:
+          NOTIFY_LOGIN: ${{ vars.UPSTREAM_NOTIFY_LOGIN }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const lock = JSON.parse(fs.readFileSync('.github/kaspi-upstream.json', 'utf8'));
+            if (lock.repository !== 'tapter-dev/kaspi-pos-automation' || lock.branch !== 'main' || !/^[0-9a-f]{40}$/.test(lock.reviewed_commit)) {
+              throw new Error('Unexpected upstream configuration');
+            }
+            const upstream = {owner:'tapter-dev',repo:'kaspi-pos-automation'};
+            const {data:branch} = await github.rest.repos.getBranch({...upstream,branch:lock.branch});
+            const latest = branch.commit.sha;
+            if (!/^[0-9a-f]{40}$/.test(latest)) throw new Error('Invalid upstream commit');
+            const managed = '<!-- mbusiness-kaspi-upstream -->';
+            const title = '[Kaspi upstream] Обновления для проверки';
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,state:'all',sort:'updated',direction:'desc',per_page:100,creator:'github-actions[bot]'
+            });
+            const existing = issues.find(i => !i.pull_request && i.title === title && i.body?.includes(managed));
+            if (latest === lock.reviewed_commit) {
+              core.info('Reviewed version matches upstream.');
+              if (existing?.state === 'open') await github.rest.issues.update({...context.repo,issue_number:existing.number,state:'closed',state_reason:'completed'});
+              return;
+            }
+            const revisionMarker = `<!-- kaspi-head:${latest} -->`;
+            if (existing?.body?.includes(revisionMarker)) {
+              core.info('This upstream revision has already been reported.');
+              return;
+            }
+            let comparison = 'Историю нельзя сопоставить автоматически; проверьте коммиты вручную.';
+            try {
+              const {data:diff} = await github.rest.repos.compareCommitsWithBasehead({...upstream,basehead:`${lock.reviewed_commit}...${latest}`});
+              comparison = `Состояние истории: ${diff.status}. Новых коммитов: ${diff.ahead_by}.`;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const notify = process.env.NOTIFY_LOGIN || '';
+            if (notify && !/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(notify)) throw new Error('Invalid notification login');
+            const body = [
+              managed, revisionMarker,
+              notify ? `@${notify}, доступны изменения исходного Kaspi-коннектора.` : 'Доступны изменения исходного Kaspi-коннектора.',
+              '',
+              `Источник: https://github.com/${lock.repository}`,
+              `Проверенная в MBusiness версия: \`${lock.reviewed_commit}\``,
+              `Текущая upstream-версия: \`${latest}\``,
+              comparison,
+              `Сравнение: https://github.com/${lock.repository}/compare/${lock.reviewed_commit}...${latest}`,
+              '',
+              '- [ ] Проверить изменения авторизации, версии клиента и подписей запросов.',
+              '- [ ] Проверить статусы платежей, сверку и обработку неопределённых операций.',
+              '- [ ] Адаптировать нужные изменения в src/kaspi/ и src/drivers/kaspi.js.',
+              '- [ ] Выполнить unit/HTTP/browser проверки без реальных банковских операций.',
+              '- [ ] После проверки обновить reviewed_commit в .github/kaspi-upstream.json.',
+              '',
+              'Изменения не применяются к приложению и production автоматически. Секреты и доступ к серверу этому workflow не передаются.',
+              'Повторное уведомление для того же коммита не создаётся. После закрытия задачи монитор сообщит только о следующей новой версии.'
+            ].join('\n');
+            if (existing) {
+              await github.rest.issues.update({...context.repo,issue_number:existing.number,title,body,state:'open'});
+              core.info(`Updated review issue #${existing.number}`);
+            } else {
+              const {data:issue} = await github.rest.issues.create({...context.repo,title,body});
+              core.info(`Created review issue #${issue.number}`);
+            }

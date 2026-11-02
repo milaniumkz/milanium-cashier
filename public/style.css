@@ -4,3 +4,6 @@
 .checkout{margin:0;flex:initial}
 
 .android-dialog{width:min(820px,calc(100% - 28px))}.android-layout{display:grid;grid-template-columns:minmax(200px,320px) 1fr;gap:28px}.android-screen-wrap{background:#101c31;border:6px solid #101c31;border-radius:18px;min-height:300px;overflow:hidden;align-self:start}.android-screen-wrap img{display:block;width:100%;height:auto;cursor:crosshair}.android-screen-wrap p{color:white;padding:20px}.android-controls button{width:100%;margin-bottom:12px}.android-controls p{font-size:.82rem;line-height:1.6}@media(max-width:600px){.android-layout{grid-template-columns:1fr}.android-screen-wrap{max-width:300px;margin:auto;width:100%}}
+
+/* MBusiness operator and checkout theme */
+:root{--blue:#078b69;--muted:#7a8785;--line:#e6ebea;color:#182b29;background:#f5f7f8}.primary:hover{background:#04775a}.sidebar{background:#152a27}.nav-item.active{background:#215441}.stats article:first-child{background:#163e31;border-color:#163e31}.login-screen{background:#f3f7f4}.login-card{box-shadow:0 20px 80px #17382b0d}.brand{letter-spacing:-.5px}.checkout-body{background:#f5f7f8}.checkout{box-shadow:0 15px 70px #183b2b08}.checkout .brand-mark{background:#078b69}.notice.live{background:#edf7f0;border-color:#d4eada;color:#336748}

@@ -50,7 +50,19 @@ export class Store {
         amount INTEGER NOT NULL, currency TEXT NOT NULL, state TEXT NOT NULL,
         expires_at INTEGER NOT NULL
       );`);
+    const columns=this.db.prepare('PRAGMA table_info(merchants)').all();
+    if(!columns.some(c=>c.name==='api_ip'))this.db.exec('ALTER TABLE merchants ADD COLUMN api_ip TEXT;');
+    if(!columns.some(c=>c.name==='api_ip_updated_at'))this.db.exec('ALTER TABLE merchants ADD COLUMN api_ip_updated_at INTEGER;');
     if (!this.db.prepare('PRAGMA table_info(merchants)').all().some(c=>c.name==='device_udid')) this.db.exec('ALTER TABLE merchants ADD COLUMN device_udid TEXT; CREATE UNIQUE INDEX IF NOT EXISTS device_isolation ON merchants(device_udid) WHERE device_udid IS NOT NULL;');
+  }
+  bindApiServer(id,ip) {
+    return this.transaction(()=>{
+      const key=token('mk_');
+      const result=this.db.prepare('UPDATE merchants SET api_hash=?,api_ip=?,api_ip_updated_at=? WHERE id=?').run(hash(key),ip,now(),id);
+      if(!result.changes)throw new AppError('NOT_FOUND','Компания не найдена.',404);
+      this.audit(id,null,'api.server_bound',ip);
+      return {api_key:key,api_ip:ip};
+    });
   }
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
@@ -104,10 +116,12 @@ export class Store {
         return { invoice: existing[0], replay: true };
       }
       const id = randomUUID(), at = now();
+      const billingDay = this.billing?.admit(m.id, at);
       this.db.prepare(`INSERT INTO invoices(id,merchant_id,order_id,idem,fingerprint,amount,currency,method,phone,description,public_token,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         id, m.id, v.order_id, idem, fingerprint, v.amount, v.currency, v.method,
         v.customer_phone ? seal(v.customer_phone, this.config.key, `phone:${id}`) : null,
         v.description, token(), 'queued', at, at);
+      this.billing?.reserve(m.id, id, billingDay);
       this.audit(m.id, id, 'invoice.queued');
       return { invoice: this.invoice(id), replay: false };
     });
@@ -135,6 +149,7 @@ export class Store {
       if (terminal.has(old.status) && changes.status && changes.status !== old.status) throw new AppError('TERMINAL_STATE', 'Конечный статус нельзя перезаписать.', 409);
       this.db.prepare(`UPDATE invoices SET ${entries.map(([k]) => `${k}=?`).join(',')},updated_at=? WHERE id=?`).run(...entries.map(([,v]) => v), now(), id);
       const current = this.invoice(id);
+      this.billing?.release(current);
       if (changes.status && changes.status !== old.status) {
         this.audit(old.merchant_id, id, 'invoice.status', `${old.status} → ${changes.status}`);
         const eventId = randomUUID();
@@ -164,9 +179,12 @@ export class Store {
   retry(id) {
     const i = this.invoice(id);
     if (!i || !['requires_auth', 'failed'].includes(i.status) || i.submitted || i.provider_id) throw new AppError('RETRY_NOT_SAFE', 'Повтор запрещён: сначала требуется сверка операции.', 409);
-    // A failure conclusively before submit is the only terminal state that can be requeued.
-    this.db.prepare("UPDATE invoices SET status='queued',error_code=NULL,updated_at=? WHERE id=?").run(now(), id);
-    this.audit(i.merchant_id, id, 'invoice.safe_retry');
+    return this.transaction(() => {
+      const day=this.billing?.admit(i.merchant_id,now());
+      this.db.prepare("UPDATE invoices SET status='queued',error_code=NULL,updated_at=? WHERE id=?").run(now(),id);
+      this.billing?.reserve(i.merchant_id,id,day);
+      this.audit(i.merchant_id,id,'invoice.safe_retry');
+    });
   }
   outbox() { return this.db.prepare('SELECT e.*,m.webhook_url,m.webhook_secret FROM events e JOIN merchants m ON m.id=e.merchant_id WHERE e.delivered_at IS NULL AND e.dead=0 AND e.next_at<=? AND m.webhook_url!=? ORDER BY e.next_at LIMIT 10').all(now(), ''); }
   close() { this.db.close(); }

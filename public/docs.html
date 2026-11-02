@@ -1,0 +1,72 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><title>Документация API — MBusiness</title><link rel="stylesheet" href="/assets/business.css"><script src="/assets/docs.js" type="module"></script></head><body class="docs-body"><header class="docs-header"><a href="/" class="logo"><span class="logo-mark">M</span><span>MBusiness<span class="logo-dot">.</span></span></a><a class="secondary" href="/">Войти в кабинет →</a></header><div class="docs-layout"><nav class="docs-nav"><a href="#quickstart">Быстрый старт</a><a href="#auth">Авторизация</a><a href="#server">Привязка сервера</a><a href="#create">Создание счёта</a><a href="#status">Статусы платежа</a><a href="#billing">Тарифы и лимиты</a><a href="#webhooks">Webhooks</a><a href="#errors">Ошибки</a></nav><main class="docs-content"><span class="eyebrow">MBUSINESS / API V1</span><h1>Одна интеграция.<br>Все платежи под контролем.</h1><p>Создавайте счета из вашей CRM, интернет-магазина или приложения. Передавайте покупателю страницу оплаты и получайте подтверждение на свой backend.</p><div class="notice">Примеры используют YOUR_API_KEY и адрес вашего сервера. Банковская интеграция требует проверки на вашем кабинете. В sandbox денежные операции не выполняются.</div>
+<section id="quickstart"><h2>Быстрый старт</h2><ol><li>Зарегистрируйте компанию в MBusiness и сохраните секрет webhook. В «API и webhooks» укажите публичный исходящий IP backend-сервера, подтвердите паролем и сохраните новый API-ключ. Старый ключ отключится.</li><li>Пополните баланс через подтверждённую администратором заявку и активируйте тариф.</li><li>Подключите кассира через форму SMS-входа (в sandbox используется симулятор).</li><li>С указанного сервера проверьте GET /v1/capabilities с Bearer-ключом. Затем создайте счёт и передайте checkout_url покупателю.</li><li>Дождитесь статуса paid через API или подписанный webhook.</li></ol><div class="code-head"><span>cURL · создание QR-счёта</span><button class="secondary copy-code" data-copy="curl">Копировать</button></div><pre class="code" id="curl">curl -X POST https://YOUR_SERVER/v1/invoices \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: order-1001-attempt-1' \
+  -d '{"order_id":"order-1001","amount":15000,"method":"qr"}'</pre><div class="code-head"><span>Node.js ≥ 20</span><button class="secondary copy-code" data-copy="node">Копировать</button></div><pre class="code" id="node">const response = await fetch(`${process.env.MBUSINESS_URL}/v1/invoices`, {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${process.env.MBUSINESS_API_KEY}`,
+    'Content-Type': 'application/json',
+    'Idempotency-Key': 'order-1001-attempt-1',
+  },
+  body: JSON.stringify({ order_id: 'order-1001', amount: 15000, method: 'qr' }),
+});
+const invoice = await response.json();
+if (!response.ok) throw new Error(invoice.error.code);
+// Покажите покупателю invoice.checkout_url. Это ещё не подтверждение оплаты.</pre><div class="code-head"><span>Python · requests</span><button class="secondary copy-code" data-copy="python">Копировать</button></div><pre class="code" id="python">import os
+import requests
+
+response = requests.post(
+    os.environ['MBUSINESS_URL'] + '/v1/invoices',
+    headers={
+        'Authorization': 'Bearer ' + os.environ['MBUSINESS_API_KEY'],
+        'Idempotency-Key': 'order-1001-attempt-1',
+    },
+    json={'order_id': 'order-1001', 'amount': 15000, 'method': 'qr'},
+    timeout=20,
+)
+response.raise_for_status()
+invoice = response.json()
+checkout_url = invoice['checkout_url']</pre></section>
+<section id="auth"><h2>Авторизация</h2><p>Все /v1/* endpoints требуют заголовок Authorization: Bearer YOUR_API_KEY. Ключ принадлежит одной компании. Храните его на сервере; не помещайте в браузер, Flutter или мобильное приложение. Ключ работает только с указанного исходящего IP сервера. До привязки запросы API запрещены. После ротации в кабинете старый ключ перестаёт работать немедленно, привязка к IP сохраняется.</p><p>Вход в MBusiness по логину и паролю и SMS-вход кассира Kaspi — отдельные действия. API не принимает SMS-коды и банковские сессии.</p></section>
+<section id="server"><h2>Привязка API к вашему серверу</h2><ol><li>Узнайте постоянный публичный IP, с которого backend вашей системы выходит в интернет. При NAT это адрес внешнего шлюза, а не внутренний адрес контейнера.</li><li>Откройте кабинет → «API и webhooks» → «Сервер интеграции». Укажите один IPv4 или IPv6 без порта, маски сети или URL. Подтвердите паролем MBusiness.</li><li>Сохраните выданный новый ключ в секретах вашего backend. Старый ключ перестанет работать сразу, включая ключ, полученный при регистрации.</li><li>Выполните пробный GET /v1/capabilities именно с этого сервера. Тест с рабочего компьютера или браузера может иметь другой IP и будет отклонён.</li><li>Создавайте счета и принимайте webhook на вашем backend. Покупатели открывают checkout_url без API-ключа; их IP не ограничивается.</li></ol><pre class="code">curl https://YOUR_SERVER/v1/capabilities \
+  -H 'Authorization: Bearer YOUR_API_KEY'</pre><p>Успешный ответ содержит api_server_ip — адрес привязки. Это подтверждает доступ API; не гарантирует, что банковский кассир подключён или реальные операции разрешены.</p><p>IP проверяется для всех /v1/*, включая чтение, тарифы и повторы запросов. Чужой адрес возвращает 403 API_IP_NOT_ALLOWED. Отсутствие привязки — 403 API_SERVER_REQUIRED. Ротация ключа сохраняет IP; смена IP выдаёт новый ключ и отключает предыдущий.</p><div class="notice amber">Разрешён один точный адрес. Если сервер выходит то по IPv4, то по IPv6, настройте постоянный адрес выхода. Динамический IP и смена NAT-шлюза требуют новой привязки. IP не доказывает физическую уникальность сервера: несколько машин за общим NAT или прокси имеют один адрес. Ключ всё равно должен оставаться секретом.</div><p>Не добавляйте X-Forwarded-For, X-Real-IP или Forwarded для обхода проверки. Их нельзя использовать как доказательство владения сервером. На стороне MBusiness адрес из X-Forwarded-For принимается только от явно настроенного доверенного reverse proxy, который заменяет заголовок реальным адресом клиента.</p></section>
+<section id="create"><h2>Создание счёта</h2><div class="endpoint"><span class="method">POST</span><code>/v1/invoices</code></div><p>Обязателен Idempotency-Key: 8–120 символов из букв, цифр, _, ., :, -. Повторяйте запрос с тем же ключом и теми же параметрами при потере ответа. Новый ключ для того же order_id не создаёт новый счёт.</p><div class="table-wrap"><table><thead><tr><th>Поле</th><th>Тип</th><th>Описание</th></tr></thead><tbody><tr><td>order_id</td><td>string</td><td>Уникальный номер заказа компании, 1–100 символов. Буквы, цифры, _, ., :, -.</td></tr><tr><td>amount</td><td>integer</td><td>Сумма в целых тенге, от 1 до 99 999 999. Не в тиынах.</td></tr><tr><td>currency</td><td>string</td><td>Только KZT. Можно не указывать.</td></tr><tr><td>method</td><td>string</td><td>qr или phone.</td></tr><tr><td>customer_phone</td><td>string</td><td>Обязателен для phone, формат +77001234567.</td></tr><tr><td>description</td><td>string</td><td>Необязательное описание до 200 символов.</td></tr></tbody></table></div><h3>Ответ: 201 Created или 200 при повторе</h3><pre class="code">{
+  "id": "UUID",
+  "order_id": "order-1001",
+  "merchant_id": "COMPANY_UUID",
+  "amount": 15000,
+  "currency": "KZT",
+  "method": "qr",
+  "status": "queued",
+  "checkout_url": "https://YOUR_SERVER/p/PUBLIC_TOKEN",
+  "provider_id": null,
+  "payment_url": null,
+  "qr_available": false,
+  "replay": false
+}</pre><p>Создание асинхронное. Передавайте checkout_url сразу: страница обновляет статус автоматически. payment_url и QR появятся после успешного ответа коннектора. Ссылка — это способ оплаты, а не доказательство списания денег.</p></section>
+<section id="status"><h2>Проверка статуса</h2><div class="endpoint"><span class="method">GET</span><code>/v1/invoices/:id</code></div><p>Возвращает счёт только вашей компании. Также доступны GET /v1/invoices (последние 100 счетов) и GET /v1/capabilities (режим и доступность методов).</p><div class="table-wrap"><table><thead><tr><th>Статус</th><th>Значение</th></tr></thead><tbody><tr><td>queued / processing</td><td>В очереди / выполняется запрос.</td></tr><tr><td>pending</td><td>Операция создана, ожидается оплата.</td></tr><tr><td>paid</td><td>Оплата подтверждена коннектором с проверкой данных операции.</td></tr><tr><td>declined / expired</td><td>Отказ / истечение операции.</td></tr><tr><td>unknown</td><td>Результат неизвестен. Не создавайте замену: требуется сверка.</td></tr><tr><td>failed / requires_auth</td><td>Ошибка до отправки / кассиру требуется повторный вход.</td></tr></tbody></table></div><p>Подтверждайте заказ только после paid и проверки merchant_id, order_id, amount и currency. При unknown не выставляйте повторный счёт автоматически.</p></section>
+<section id="billing"><h2>Тарифы и дневной лимит</h2><div class="endpoint"><span class="method">GET</span><code>/v1/billing</code></div><p>Возвращает balance, plan, active, expires_at, used_today и remaining_today. Тарифы: Старт — 50/день за 10 000 ₸/мес; Бизнес — 200 за 25 000 ₸; Про — 400 за 60 000 ₸; Про Макс — 700 за 90 000 ₸. Больше 700 — по договорённости.</p><p>Подписка оплачивается с баланса за календарный месяц. Дополнительных 200 ₸ за счёт нет. Дневной лимит обновляется в 00:00 Asia/Almaty. Место резервируется атомарно при постановке в очередь, возвращается при подтверждённой ошибке до отправки. Неизвестная операция сохраняет место. Повтор исходного запроса места не занимает. Проверка ранее созданных счетов доступна и после окончания подписки.</p><p>Пополнение пока работает по заявке с ручной проверкой реального перевода администратором. Автоматический эквайринг не подключён. Регистрация не предоставляет бесплатного платного тарифа.</p></section>
+<section id="webhooks"><h2>Webhooks</h2><p>Задайте HTTPS-адрес в «API и webhooks». Администратор должен разрешить origin в WEBHOOK_ALLOWED_ORIGINS. Приватные адреса не допускаются. Сервис отправляет POST при изменении состояния счёта.</p><pre class="code">{
+  "event_id": "EVENT_UUID",
+  "type": "invoice.paid",
+  "created_at": "2026-11-02T10:00:00.000Z",
+  "invoice": {
+    "id": "UUID", "merchant_id": "COMPANY_UUID",
+    "order_id": "order-1001", "amount": 15000,
+    "currency": "KZT", "status": "paid"
+  }
+}</pre><p>Заголовки: X-Cashier-Event, X-Cashier-Timestamp (Unix seconds), X-Cashier-Signature: sha256=HEX. Подпись вычисляется как HMAC-SHA256(secret, timestamp + '.' + RAW_BODY). Важно использовать исходные байты тела, до повторной JSON-сериализации.</p><div class="code-head"><span>Node.js · проверка подписи</span><button class="secondary copy-code" data-copy="signature">Копировать</button></div><pre class="code" id="signature">import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verifyWebhook(rawBody, headers, secret) {
+  const timestamp = headers['x-cashier-timestamp'];
+  const supplied = headers['x-cashier-signature'];
+  if (!/^\d+$/.test(timestamp || '')) return false;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  if (!/^sha256=[0-9a-f]{64}$/.test(supplied || '')) return false;
+  const expected = 'sha256=' + createHmac('sha256', secret)
+    .update(timestamp + '.').update(rawBody).digest('hex');
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(supplied));
+}</pre><p>Повторная доставка возможна. Сохраняйте event_id и обрабатывайте его один раз в транзакции с обновлением заказа. События могут прийти не по порядку: не перезаписывайте подтверждённую оплату старым pending. При сомнениях получите текущее состояние через GET /v1/invoices/:id.</p><p>Отвечайте 2xx после надёжного сохранения события. Ошибки доставки повторяются до 12 попыток с увеличением задержки. Приостановленную доставку можно повторить из кабинета. При ротации webhook-секрета синхронно обновите обработчик.</p></section>
+<section id="errors"><h2>Ошибки</h2><pre class="code">{"error":{"code":"SUBSCRIPTION_REQUIRED","message":"Выберите и оплатите тариф для выставления счетов."}}</pre><div class="table-wrap"><table><thead><tr><th>HTTP</th><th>Код</th><th>Действие</th></tr></thead><tbody><tr><td>400</td><td>VALIDATION_ERROR / INVALID_IDEMPOTENCY_KEY</td><td>Проверьте поля и формат ключа.</td></tr><tr><td>401</td><td>UNAUTHORIZED</td><td>Проверьте API-ключ.</td></tr><tr><td>402</td><td>SUBSCRIPTION_REQUIRED / INSUFFICIENT_BALANCE</td><td>Пополните баланс и оплатите тариф.</td></tr><tr><td>403</td><td>API_SERVER_REQUIRED</td><td>Привяжите публичный IP в кабинете и используйте новый ключ.</td></tr><tr><td>403</td><td>API_IP_NOT_ALLOWED</td><td>Отправьте запрос с зарегистрированного сервера; проверьте исходящий IP и NAT.</td></tr><tr><td>404</td><td>NOT_FOUND</td><td>Счёт отсутствует или принадлежит другой компании.</td></tr><tr><td>409</td><td>IDEMPOTENCY_CONFLICT / AUTH_REQUIRED</td><td>Повторите исходный запрос / подключите кассира.</td></tr><tr><td>409</td><td>LIVE_AUTOMATION_DISABLED / METHOD_UNAVAILABLE</td><td>Метод не настроен администратором.</td></tr><tr><td>429</td><td>DAILY_LIMIT_REACHED / RATE_LIMIT</td><td>Дневной лимит исчерпан / слишком частые запросы.</td></tr></tbody></table></div><p>Транспортный таймаут не означает, что счёт не создан. Повторяйте тот же запрос с исходным Idempotency-Key.</p></section><p>MBusiness · Независимый сервис, не продукт Kaspi.</p></main></div></body></html>

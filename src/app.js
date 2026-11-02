@@ -10,6 +10,9 @@ import { token, hash, equal } from './crypto.js';
 import { invoiceSchema, merchantSchema } from './config.js';
 import { AndroidDriver } from './drivers/android.js';
 import { SandboxDriver } from './drivers/sandbox.js';
+import { KaspiDriver } from './drivers/kaspi.js';
+import { requireApiServer, publicServerIp } from './api-access.js';
+import { registerBusiness } from './business.js';
 import { Worker } from './worker.js';
 import { Outbox, validateWebhookUrl } from './webhooks.js';
 
@@ -17,7 +20,7 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 export async function buildApp(config, options = {}) {
   const app = Fastify({ logger: options.logger ?? { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'], serializers: { req: req => ({ method: req.method, url: req.url.replace(/(\/public\/payments\/|\/sandbox\/payments\/|\/sandbox\/pay\/|\/p\/)[^/?]+/g, '$1[redacted]') }) } }, bodyLimit: 32768, trustProxy: false });
   const store = options.store || new Store(config);
-  const driver = options.driver || (config.mode === 'sandbox' ? new SandboxDriver(config, store) : new AndroidDriver(config, store));
+  const driver = options.driver || (config.mode === 'sandbox' ? new SandboxDriver(config, store) : config.mode === 'kaspi' ? new KaspiDriver(config, store) : new AndroidDriver(config, store));
   const worker = new Worker(store, driver, config), outbox = new Outbox(store, config);
   const adminSessions = new Map();
   await app.register(cookie);
@@ -43,8 +46,10 @@ export async function buildApp(config, options = {}) {
     const key = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
     const merchant = key && store.merchantByKey(key);
     if (!merchant) throw new AppError('UNAUTHORIZED', 'Недействительный API-ключ.', 401);
+    requireApiServer(req,merchant,config);
     req.merchant = merchant;
   };
+  app.addHook('preHandler',async req=>{if(req.routeOptions.url?.startsWith('/v1/'))await api(req);});
   const getInvoice = (id, merchantId) => {
     const i = store.invoice(id);
     if (!i || merchantId && i.merchant_id !== merchantId) throw new AppError('NOT_FOUND', 'Платёж не найден.', 404);
@@ -57,11 +62,12 @@ export async function buildApp(config, options = {}) {
     const previous = store.db.prepare('SELECT id FROM invoices WHERE merchant_id=? AND (order_id=? OR idem=?)').get(merchant.id, v.order_id, idem || '');
     if (!previous) {
       const caps = driver.capabilities();
-      if (!caps.configured || !caps[v.method]) throw new AppError(caps.reason || 'METHOD_UNAVAILABLE', 'Android-коннектор не настроен для этого способа.', 409);
-      if (config.mode === 'android' && merchant.state !== 'connected') throw new AppError('AUTH_REQUIRED', 'Сначала войдите в приложение кассира на выделенном Android.', 409);
+      if (!caps.configured || !caps[v.method]) throw new AppError(caps.reason || 'METHOD_UNAVAILABLE', 'Коннектор не настроен для этого способа.', 409);
+      if (config.mode !== 'sandbox' && merchant.state !== 'connected') throw new AppError('AUTH_REQUIRED', 'Сначала подключите кассира.', 409);
     }
     return store.createInvoice(merchant, v, idem);
   };
+  const business=registerBusiness(app,{store,config,driver,worker,create,admin});
   app.get('/healthz', async () => ({ ok: true }));
   app.post('/admin/login', { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { password } = z.object({ password: z.string().max(300) }).strict().parse(req.body);
@@ -86,12 +92,26 @@ export async function buildApp(config, options = {}) {
     reply.code(201); return store.createMerchant(v);
   });
   app.post('/admin/merchants/:id/key', { preHandler: admin }, async req => { getMerchant(req.params.id); return { api_key: store.rotateKey(req.params.id) }; });
+  app.post('/admin/merchants/:id/api-server',{preHandler:admin},async req=>{
+    getMerchant(req.params.id);
+    const {ip}=z.object({ip:z.string().trim().refine(v=>!!publicServerIp(v),'Укажите один публичный IPv4 или IPv6 без порта и маски.')}).strict().parse(req.body);
+    return store.bindApiServer(req.params.id,publicServerIp(ip));
+  });
   app.patch('/admin/merchants/:id/webhook', { preHandler: admin }, async req => {
     getMerchant(req.params.id);
     const { webhook_url } = merchantSchema.pick({ webhook_url:true }).parse(req.body);
     validateWebhookUrl(webhook_url, config);
     store.db.prepare('UPDATE merchants SET webhook_url=? WHERE id=?').run(webhook_url, req.params.id);
     store.audit(req.params.id, null, 'webhook.updated'); return { ok:true };
+  });
+  const kaspiLocks=new Set();
+  for(const step of ['start','verify'])app.post(`/admin/kaspi/:id/${step}`, {preHandler:admin,config:{rateLimit:{max:5,timeWindow:'1 minute'}}}, async req=>{
+    const m=getMerchant(req.params.id);
+    if(config.mode!=='kaspi')throw new AppError('METHOD_UNAVAILABLE','Серверный Kaspi-коннектор выключен.',409);
+    if(worker.busy.has(m.id)||kaspiLocks.has(m.id))throw new AppError('BUSY','Дождитесь окончания текущего действия.',409);
+    const input=(step==='start'?z.object({phone:z.string().regex(/^\+?7\d{10}$/)}):z.object({otp:z.string().regex(/^\d{4,8}$/)})).strict().parse(req.body);
+    kaspiLocks.add(m.id);worker.busy.add(m.id);
+    try{return await driver.authenticate(m,step,input);}finally{kaspiLocks.delete(m.id);worker.busy.delete(m.id);}
   });
   const manualLocks=new Set();
   const manual=async(id,fn)=>{
@@ -159,13 +179,13 @@ export async function buildApp(config, options = {}) {
     if (!result.changes) throw new AppError('NOT_FOUND', 'Нет недоставленного события.', 404);
     return { ok: true };
   });
-  app.post('/v1/invoices', { preHandler: api, config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: req => hash(req.headers.authorization || req.ip) } } }, async (req, reply) => {
+  app.post('/v1/invoices', { config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: req => hash(req.headers.authorization || req.ip) } } }, async (req, reply) => {
     const result = create(req.merchant, req.body, req.headers['idempotency-key']);
     reply.code(result.replay ? 200 : 201); return { ...store.invoicePublic(result.invoice), replay: result.replay };
   });
-  app.get('/v1/invoices', { preHandler: api }, async req => ({ data: store.listInvoices(req.merchant.id).map(i => store.invoicePublic(i)) }));
-  app.get('/v1/invoices/:id', { preHandler: api }, async req => store.invoicePublic(getInvoice(req.params.id, req.merchant.id)));
-  app.get('/v1/capabilities', { preHandler: api }, async req => ({ ...driver.capabilities(), connection: req.merchant.state, mode: config.mode }));
+  app.get('/v1/invoices', {}, async req => ({ data: store.listInvoices(req.merchant.id).map(i => store.invoicePublic(i)) }));
+  app.get('/v1/invoices/:id', {}, async req => store.invoicePublic(getInvoice(req.params.id, req.merchant.id)));
+  app.get('/v1/capabilities', {}, async req => ({ ...driver.capabilities(), connection: req.merchant.state, mode: config.mode, api_server_ip:req.merchant.api_ip }));
   app.get('/public/payments/:token', async req => {
     const i = store.byPublicToken(req.params.token);
     if (!i) throw new AppError('NOT_FOUND', 'Ссылка не найдена.', 404);
@@ -192,16 +212,19 @@ export async function buildApp(config, options = {}) {
       store.patch(i.id, { next_poll: 0 }); return { ok: true };
     });
   }
-  const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css']);
+  const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'business.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
   });
-  app.get('/', (_, reply) => serve('index.html', reply));
+  app.get('/favicon.ico', (_,reply)=>reply.code(204).send());
+  app.get('/', (_, reply) => serve('business.html', reply));
+  app.get('/operator', (_, reply) => serve('index.html', reply));
+  app.get('/docs', (_, reply) => serve('docs.html', reply));
   app.get('/p/:token', (_, reply) => serve('checkout.html', reply));
   if (config.mode === 'sandbox') app.get('/sandbox/pay/:token', (_, reply) => serve('sandbox.html', reply));
-  app.decorate('services', { store, driver, worker, outbox });
+  app.decorate('services', { store, driver, worker, outbox, business });
   app.addHook('onClose', async () => { await worker.stop(); await outbox.stop(); if (!options.store) store.close(); });
   if (options.background !== false) { store.recover(); worker.start(); outbox.start(); }
   return app;

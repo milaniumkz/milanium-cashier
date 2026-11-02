@@ -7,7 +7,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { buildApp } from '../src/app.js';
 
-const c={mode:'sandbox',production:false,key:randomBytes(32),adminPassword:randomBytes(24).toString('base64url'),baseUrl:'http://127.0.0.1',dataDir:mkdtempSync(path.join(tmpdir(),'cashier-http-')),pollMs:1000,webhookOrigins:[]};
+const c={mode:'sandbox',production:false,key:randomBytes(32),adminPassword:randomBytes(24).toString('base64url'),baseUrl:'http://127.0.0.1',dataDir:mkdtempSync(path.join(tmpdir(),'cashier-http-')),pollMs:1000,webhookOrigins:[],trustedProxyIps:['127.0.0.1']};
 const app=await buildApp(c,{logger:false});
 try{
   c.baseUrl=await app.listen({host:'127.0.0.1',port:0});
@@ -15,12 +15,13 @@ try{
     const r=await fetch(c.baseUrl+url,{method,headers:{'Content-Type':'application/json',...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
     assert.ok(r.ok,`${method} ${url}: ${r.status}`);return r;
   };
-  assert.match(await(await request('/')).text(),/android-dialog/);
+  assert.match(await(await request('/')).text(),/MBusiness/);
   for(const asset of ['app.js','checkout.js','style.css'])await request('/assets/'+asset);
   const login=await request('/admin/login','POST',{password:c.adminPassword});
   const admin={Cookie:login.headers.get('set-cookie').split(';')[0]};
   const a=await(await request('/admin/merchants','POST',{name:'HTTP test',account_label:'HTTP test'},admin)).json();
-  const api={Authorization:'Bearer '+a.api_key,'Idempotency-Key':'http-test-key-1'};
+  const binding=await(await request(`/admin/merchants/${a.merchant.id}/api-server`,'POST',{ip:'93.184.216.34'},admin)).json();
+  const api={Authorization:'Bearer '+binding.api_key,'X-Forwarded-For':'93.184.216.34','Idempotency-Key':'http-test-key-1'};
   const body={order_id:'http-test-1',amount:15000,method:'qr'};
   const invoice=await(await request('/v1/invoices','POST',body,api)).json();
   const waitFor=async(status)=>{for(let n=0;n<80;n++){const i=await(await request('/v1/invoices/'+invoice.id,'GET',undefined,api)).json();if(i.status===status)return i;await delay(100);}throw new Error('Timed out waiting for '+status);};

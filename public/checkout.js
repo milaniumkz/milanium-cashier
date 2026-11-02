@@ -5,7 +5,7 @@ async function refresh(){if(busy)return;busy=true;try{
   const r=await fetch(`/public/payments/${encodeURIComponent(token)}`);const p=await r.json();if(!r.ok)throw new Error(p.error?.message||'Платёж недоступен.');
   $('#merchant').textContent=p.merchant_name;$('#order').textContent=`Заказ № ${p.order_id}`;$('#amount').textContent=new Intl.NumberFormat('ru-RU').format(p.amount)+' ₸';$('#status').textContent=labels[p.status]||p.status;
   $('#status').className=`badge ${p.status}`;$('#error').textContent='';$('#payment-mode').hidden=p.mode!=='sandbox';if(p.mode==='sandbox')$('#payment-mode').textContent='ТЕСТОВАЯ КАССА · Это не Kaspi. Денежных операций нет.';
-  $('#hint').textContent=p.status==='paid'?'Продавец получил подтверждение. Можно вернуться в приложение.':p.status==='unknown'?'Не оплачивайте повторно, пока продавец сверяет результат.':p.method==='phone'&&p.mode==='android'?'Откройте полученный счёт в приложении Kaspi.kz.':p.status==='pending'?'Оплатите по ссылке или отсканируйте QR другим телефоном.':'';
+  $('#hint').textContent=p.status==='paid'?'Продавец получил подтверждение. Можно вернуться в приложение.':p.status==='unknown'?'Не оплачивайте повторно, пока продавец сверяет результат.':p.method==='phone'&&p.mode!=='sandbox'?'Откройте полученный счёт в приложении Kaspi.kz.':p.status==='pending'?'Оплатите по ссылке или отсканируйте QR другим телефоном.':'';
   $('#expiry').textContent=p.qr_expired&&p.status==='pending'?'QR истёк. Дождитесь проверки статуса или обратитесь к продавцу.':p.expires_at&&p.status==='pending'?`Действует до ${new Date(p.expires_at).toLocaleTimeString('ru-RU')}`:'';
   if(sandbox){for(const s of ['#simulate-paid','#simulate-declined'])$(s).hidden=p.status!=='pending'||p.qr_expired;}
   else {

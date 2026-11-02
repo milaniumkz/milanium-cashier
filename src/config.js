@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { normalizeIp } from './api-access.js';
 import { z } from 'zod';
 
 export function loadConfig(env = process.env) {
@@ -6,15 +7,17 @@ export function loadConfig(env = process.env) {
   const key = Buffer.from(env.ENCRYPTION_KEY || '', 'base64');
   if (key.length !== 32) throw new Error('ENCRYPTION_KEY must be base64 of 32 bytes. Run npm run init.');
   if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 24) throw new Error('ADMIN_PASSWORD must contain at least 24 characters.');
-  const mode = z.enum(['sandbox', 'android']).parse(env.DRIVER_MODE || 'sandbox');
+  const mode = z.enum(['sandbox', 'android', 'kaspi']).parse(env.DRIVER_MODE || 'sandbox');
   const base = new URL(env.PUBLIC_BASE_URL || 'http://127.0.0.1:3080');
   if (base.pathname !== '/' || base.search || base.hash || base.username || base.password) throw new Error('PUBLIC_BASE_URL must be an origin.');
   if (production && base.protocol !== 'https:') throw new Error('Production requires HTTPS PUBLIC_BASE_URL.');
-  if (production && mode !== 'android') throw new Error('Sandbox must not run with NODE_ENV=production.');
+  if (production && mode === 'sandbox') throw new Error('Sandbox must not run with NODE_ENV=production.');
   const appium = new URL(env.APPIUM_URL || 'http://127.0.0.1:4723');
   if (!['http:','https:'].includes(appium.protocol) || appium.username || appium.password || appium.search || appium.hash) throw new Error('Invalid APPIUM_URL');
+  const trustedProxyIps=(env.TRUSTED_PROXY_IPS||'').split(',').map(v=>v.trim()).filter(Boolean);
+  if(trustedProxyIps.some(ip=>!normalizeIp(ip)))throw new Error('TRUSTED_PROXY_IPS must contain exact proxy IP addresses, not CIDR, hostnames or wildcards.');
   return {
-    production, mode, key, adminPassword: env.ADMIN_PASSWORD,
+    production, mode, key, trustedProxyIps, kaspiApp: Object.fromEntries(Object.entries(env).filter(([name]) => name.startsWith('APP_'))), adminPassword: env.ADMIN_PASSWORD,
     baseUrl: base.origin, host: env.HOST || '127.0.0.1', port: Number(env.PORT || 3080),
     dataDir: path.resolve(env.DATA_DIR || './data'),
     connectorPath: path.resolve(env.CONNECTOR_CONFIG || './config/android.live.json'),
