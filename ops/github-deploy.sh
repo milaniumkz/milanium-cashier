@@ -103,6 +103,8 @@ if [[ ! -x "$runtime/bin/node" ]]; then
   rm -rf -- "$stage"
   trap - EXIT
 fi
+# The mktemp extraction parent starts 0700; the service user must traverse only the runtime root.
+chmod 0755 "$runtime"
 [[ $("$runtime/bin/node" -p 'process.versions.node.split(".")[0]') == 24 ]] || exit 1
 release_dir="$root/releases/$release"
 [[ ! -L "$release_dir" ]] || exit 1
