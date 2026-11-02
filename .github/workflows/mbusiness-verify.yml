@@ -1,0 +1,18 @@
+name: MBusiness — public HTTPS verification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check live service without creating companies or payments
+        env:
+          MBUSINESS_PUBLIC_URL: https://mbusiness.89.126.192.185.sslip.io:8443
+        run: node test/public-smoke.mjs
