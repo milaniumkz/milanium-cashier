@@ -5,7 +5,7 @@ on:
       operation:
         description: Inspect performs read-only host checks; deploy requires a dedicated HTTPS domain and TLS files.
         type: choice
-        options: [inspect, prepare, deploy]
+        options: [inspect, prepare, certify, deploy]
         default: inspect
         required: true
       public_base_url:
@@ -70,7 +70,7 @@ jobs:
           if [[ "$OPERATION" == inspect ]]; then
             printf -v command 'bash %q inspect' "$remote_script"
           else
-            if [[ "$OPERATION" == deploy && -z "$PUBLIC_BASE_URL" ]]; then
+            if [[ "$OPERATION" != prepare && -z "$PUBLIC_BASE_URL" ]]; then
               echo 'Set public_base_url and provision dedicated TLS before deployment.'; exit 1
             fi
             if [[ "$OPERATION" == prepare ]]; then PUBLIC_BASE_URL=https://mbusiness.invalid:8443;fi

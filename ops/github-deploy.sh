@@ -20,7 +20,7 @@ if [[ "$mode" == inspect ]]; then
   fi
   exit 0
 fi
-[[ "$mode" == deploy || "$mode" == prepare ]] || { echo 'Unknown operation' >&2; exit 1; }
+[[ "$mode" == deploy || "$mode" == prepare || "$mode" == certify ]] || { echo 'Unknown operation' >&2; exit 1; }
 release=${2:?commit SHA required}
 archive=${3:?archive path required}
 checksum=${4:?SHA256 required}
@@ -59,6 +59,10 @@ fi
 for path in shared shared/data shared/proxy shared/proxy/tls shared/npm-cache shared/.env shared/proxy/nginx.conf shared/proxy/tls/fullchain.pem shared/proxy/tls/privkey.pem releases backups; do
   [[ ! -L "$root/$path" ]] || { echo "Unexpected symlink at $root/$path" >&2; exit 1; }
 done
+if [[ "$mode" == certify ]]; then
+  tar -xOf "$archive" ops/github-tls.sh | bash -s -- "$base_url"
+  exit 0
+fi
 if [[ "$mode" == deploy ]]; then
 # Dedicated TLS assets must already exist. Never borrow MTaxi's configuration or key.
 cert=/etc/mbusiness/tls/fullchain.pem
