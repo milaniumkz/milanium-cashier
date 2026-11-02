@@ -6,25 +6,38 @@ SSH-пароль передаётся только через зашифрова
 
 ## Состояние
 
-Workflow опубликован в main. Окружение `mbusiness-production` создано.
-Первый запуск inspect: https://github.com/milaniumkz/milanium-cashier/actions/runs/41440916571
+MBusiness развёрнут через GitHub Actions на предоставленном сервере Ubuntu 24.04.
+Публичный кабинет: https://mbusiness.89.126.192.185.sslip.io:8443/
+Документация: https://mbusiness.89.126.192.185.sslip.io:8443/docs
+Панель оператора: https://mbusiness.89.126.192.185.sslip.io:8443/operator
 
-GitHub выполнил установку зависимостей, синтаксические проверки, 68 тестов,
-HTTP smoke test и проверку shell bootstrap успешно. Следующий этап остановился
-до SSH-подключения: Secret MBUSINESS_SSH_PASSWORD не задан.
-На удалённом сервере этим запуском ничего не выполнялось, MTaxi не изменён.
+Проверенные запуски:
 
-GitHub API теперь доступен. При этом текущая интеграция возвращает
-`403 Resource not accessible by integration` для Secrets (repository и environment)
-и прямого управления Environments. Наличие admin=true у репозитория не расширяет
-разрешения GitHub App. Secret пока не записан. Его можно добавить в интерфейсе
-GitHub, не предоставляя значение в чат и не добавляя пароль в исходники.
-Ранее SSH-вход с компьютера пользователя отклонил пароль; используйте актуальный
-SSH-пароль, который сервер принимает.
+- SSH inspect: https://github.com/milaniumkz/milanium-cashier/actions/runs/41441686350
+- Подготовка backend: https://github.com/milaniumkz/milanium-cashier/actions/runs/41442750610
+- Собственный сертификат: https://github.com/milaniumkz/milanium-cashier/actions/runs/41443224929
+- Успешный deploy: https://github.com/milaniumkz/milanium-cashier/actions/runs/41443848042
 
-Окружение: https://github.com/milaniumkz/milanium-cashier/settings/environments/26015006447/edit
-После добавления Secret следует повторить inspect и проверить результат;
-это не запускает установку приложения.
+Окружение mbusiness-production и SSH Secret настроены. Ключ хоста проверяется.
+Все 68 unit/integration тестов и HTTP smoke test прошли в GitHub.
+Внешний health после deployment проверен. Реальные банковские операции выключены,
+совместимость с реальным Kaspi ещё не проверена.
+
+Доступ интеграции к GitHub API и Actions работает, но управление Secrets через
+API этой интеграции запрещено (403). SSH Secret добавлен владельцем через GitHub.
+Не переносите секреты в workflow или исходники, не печатайте их в Actions logs.
+
+Для первичной ACME-проверки добавлен только отдельный конфиг
+/etc/nginx/conf.d/mbusiness-acme.conf с новым server_name. После nginx -t выполнен
+плавный reload общего Nginx без его остановки. Исходные конфиги MTaxi проверены
+по SHA256, его страница до/после совпала. Сайты, база и контейнеры MTaxi не менялись.
+HTTPS на 8443 работает в отдельном mbusiness-proxy.service; обычные 80/443 MTaxi
+остались на месте. Собственный сертификат продлевается mbusiness-tls-renew.timer;
+при продлении перезагружается только собственный HTTPS-прокси.
+
+Пароль оператора MBusiness и ENCRYPTION_KEY созданы на сервере в
+/srv/mbusiness/shared/.env (0600). Получайте пароль только приватно через SSH,
+не выводите конфигурацию в GitHub logs и не отправляйте её целиком в чат.
 
 ## Настройки GitHub
 
@@ -103,7 +116,7 @@ Workflow:
 6. Генерирует новые локальные секреты приложения, создаёт отдельную SQLite-базу.
 7. При обновлении делает SQLite backup и закрытую копию собственного env.
 8. Запускает только mbusiness.service и свой mbusiness-proxy.service с отдельной
-   Nginx-конфигурацией, PID и портом. Общий Nginx MTaxi не перезагружается.
+   Nginx-конфигурацией, PID и портом. При обычном обновлении приложения общий Nginx не перезагружается. Первичная ACME-настройка нового домена использует отдельный конфиг и плавный reload с проверкой MTaxi.
 9. Проверяет локальный health, TLS и внешний HTTPS с GitHub runner.
 
 По умолчанию backend 127.0.0.1:3181. При первом запуске занятый порт вызывает
@@ -115,5 +128,4 @@ Workflow:
 Банковские операции по умолчанию выключены. Операторский пароль нужно получить
 приватно из конфигурации на сервере, не выводя его в Actions logs или чат.
 
-Шаблон bootstrap проверен синтаксически; выполнение на реальном сервере и
-совместимость его системного окружения остаются непроверенными до SSH-доступа.
+Bootstrap выполнен на указанном сервере. Для других серверов сначала обязателен inspect и проверка занятых портов/сервисов.
