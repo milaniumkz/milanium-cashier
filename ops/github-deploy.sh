@@ -172,6 +172,7 @@ Type=simple
 User=mbusiness
 Group=mbusiness
 ExecStart=$nginx_bin -p /srv/mbusiness/shared/proxy/ -c /srv/mbusiness/shared/proxy/nginx.conf -g "daemon off;"
+ExecReload=$nginx_bin -p /srv/mbusiness/shared/proxy/ -c /srv/mbusiness/shared/proxy/nginx.conf -s reload
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGQUIT
@@ -223,5 +224,32 @@ if [[ "$mode" == prepare ]]; then
 fi
 systemctl restart mbusiness-proxy.service
 curl --fail --silent --show-error --resolve "$domain:$proxy_port:127.0.0.1" "$base_url/healthz"
+# Renewal is isolated to MBusiness's ACME account, certificate and proxy.
+install -m 0700 "$release_dir/ops/github-renew-tls.sh" "$root/renew-tls.sh"
+certbot_bin=$(command -v certbot)
+cat > /etc/systemd/system/mbusiness-tls-renew.service <<RENEW
+[Unit]
+Description=Renew only the MBusiness TLS certificate
+[Service]
+Type=oneshot
+ExecStart=$certbot_bin renew --non-interactive --quiet --config-dir /etc/mbusiness/acme --work-dir /srv/mbusiness/acme-work --logs-dir /srv/mbusiness/acme-logs --deploy-hook /srv/mbusiness/renew-tls.sh
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+CPUQuota=25%
+MemoryMax=256M
+RENEW
+cat > /etc/systemd/system/mbusiness-tls-renew.timer <<'TIMER'
+[Unit]
+Description=Daily MBusiness TLS renewal check
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+TIMER
+systemctl daemon-reload
+systemctl enable --now mbusiness-tls-renew.timer >/dev/null
 echo "MBusiness deployed: $base_url; docs: $base_url/docs"
 echo 'Retrieve the generated operator password privately from /srv/mbusiness/shared/.env; do not print it in Actions logs.'

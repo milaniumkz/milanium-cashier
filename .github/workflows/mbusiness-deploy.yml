@@ -32,7 +32,7 @@ jobs:
       - run: npm test
       - run: npm run test:http
       - name: Validate deployment shell
-        run: bash -n ops/github-deploy.sh
+        run: for script in ops/github-*.sh; do bash -n "$script"; done
   deploy:
     needs: validate
     runs-on: ubuntu-latest
