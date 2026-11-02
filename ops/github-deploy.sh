@@ -13,11 +13,11 @@ if [[ "$mode" == inspect ]]; then
   command -v nginx || true
   exit 0
 fi
-[[ "$mode" == deploy ]] || { echo 'Unknown operation' >&2; exit 1; }
+[[ "$mode" == deploy || "$mode" == prepare ]] || { echo 'Unknown operation' >&2; exit 1; }
 release=${2:?commit SHA required}
 archive=${3:?archive path required}
 checksum=${4:?SHA256 required}
-base_url=${5:?public HTTPS origin required}
+base_url=${5:-https://mbusiness.invalid:8443}
 [[ "$release" =~ ^[a-f0-9]{40}$ && "$checksum" =~ ^[a-f0-9]{64}$ ]] || exit 1
 [[ "$archive" =~ ^/root/mbusiness-upload-[0-9]+-[0-9]+/mbusiness-${release}\.tar\.gz$ ]] || exit 1
 [[ $(id -u) == 0 ]] || { echo 'Deployment requires root for the dedicated service only.' >&2; exit 1; }
@@ -52,6 +52,7 @@ fi
 for path in shared shared/data shared/proxy shared/proxy/tls shared/npm-cache shared/.env shared/proxy/nginx.conf shared/proxy/tls/fullchain.pem shared/proxy/tls/privkey.pem releases backups; do
   [[ ! -L "$root/$path" ]] || { echo "Unexpected symlink at $root/$path" >&2; exit 1; }
 done
+if [[ "$mode" == deploy ]]; then
 # Dedicated TLS assets must already exist. Never borrow MTaxi's configuration or key.
 cert=/etc/mbusiness/tls/fullchain.pem
 cert_key=/etc/mbusiness/tls/privkey.pem
@@ -61,8 +62,11 @@ openssl x509 -in "$cert" -noout -checkhost "$domain" >/dev/null
 cert_pub=$(openssl x509 -in "$cert" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum)
 key_pub=$(openssl pkey -in "$cert_key" -pubout -outform DER | sha256sum)
 [[ "$cert_pub" == "$key_pub" ]] || { echo 'TLS certificate/key mismatch.' >&2; exit 1; }
+fi
 if [[ ! -f "$root/.mbusiness-owned" ]]; then
-  for port in "$backend_port" "$proxy_port"; do
+  ports=("$backend_port")
+  if [[ "$mode" == deploy ]]; then ports+=("$proxy_port"); fi
+  for port in "${ports[@]}"; do
     [[ -z $(ss -H -ltn "sport = :$port") ]] || { echo "Port $port is occupied; refusing to affect its service." >&2; exit 1; }
   done
 fi
@@ -129,7 +133,17 @@ writeFileSync(file,`NODE_ENV=production\nHOST=127.0.0.1\nPORT=3181\nPUBLIC_BASE_
 JS
   chown mbusiness:mbusiness "$root/shared/.env"
 fi
-"$runtime/bin/node" --env-file="$root/shared/.env" -e 'if(process.env.PUBLIC_BASE_URL!==process.argv[1]||process.env.PORT!=="3181"||process.env.DATA_DIR!=="/srv/mbusiness/shared/data")process.exit(1)' "$base_url"
+"$runtime/bin/node" --input-type=module - "$root/shared/.env" "$base_url" <<'JSENV'
+import {readFileSync,writeFileSync} from 'node:fs';
+const [file,url]=process.argv.slice(2);const text=readFileSync(file,'utf8');
+const current=text.match(/^PUBLIC_BASE_URL=(.*)$/m)?.[1];
+if(current!==url){
+ if(current!=='https://mbusiness.invalid:8443')throw new Error('Existing public URL differs; explicit migration required.');
+ writeFileSync(file,text.replace(/^PUBLIC_BASE_URL=.*$/m,'PUBLIC_BASE_URL='+url),{mode:0o600});
+}
+if(!/^PORT=3181$/m.test(text)||!/^DATA_DIR=\/srv\/mbusiness\/shared\/data$/m.test(text))throw new Error('Unexpected existing data/port configuration');
+JSENV
+if [[ "$mode" == deploy ]]; then
 install -o mbusiness -g mbusiness -m 0600 "$cert" "$root/shared/proxy/tls/fullchain.pem"
 install -o mbusiness -g mbusiness -m 0600 "$cert_key" "$root/shared/proxy/tls/privkey.pem"
 sed -e '/^user mbusiness;/d' -e "s/mbusiness.example.kz/$domain/g" -e "s/listen 8443 ssl/listen $proxy_port ssl/" -e 's@/srv/mbusiness/proxy/@/srv/mbusiness/shared/proxy/@g' "$release_dir/ops/mbusiness-nginx.conf.example" > "$root/shared/proxy/nginx.conf"
@@ -159,6 +173,7 @@ CPUQuota=25%
 [Install]
 WantedBy=multi-user.target
 UNIT
+fi
 # Back up only MBusiness state before applying additive migrations.
 if [[ -f "$root/shared/data/cashier.sqlite" ]]; then
   install -d -m 0700 "$root/backups"
@@ -177,7 +192,8 @@ ln -sfn "$runtime" "$root/runtime"
 ln -sfn "$release_dir" "$root/current"
 install -m 0644 "$release_dir/ops/mbusiness.service" /etc/systemd/system/mbusiness.service
 systemctl daemon-reload
-systemctl enable mbusiness.service mbusiness-proxy.service >/dev/null
+systemctl enable mbusiness.service >/dev/null
+if [[ "$mode" == deploy ]]; then systemctl enable mbusiness-proxy.service >/dev/null;fi
 systemctl restart mbusiness.service
 ready=false
 for attempt in {1..20}; do
@@ -187,6 +203,10 @@ done
 if [[ "$ready" != true ]]; then
   if [[ -n "$previous" && "$previous" == "$root/releases/"* ]]; then ln -sfn "$previous" "$root/current";systemctl restart mbusiness.service;fi
   echo 'MBusiness health check failed; existing MTaxi services were not changed.' >&2;exit 1
+fi
+if [[ "$mode" == prepare ]]; then
+  echo 'MBusiness private backend is ready on 127.0.0.1:3181. Public HTTPS is not configured. Real banking remains disabled.'
+  exit 0
 fi
 systemctl restart mbusiness-proxy.service
 curl --fail --silent --show-error --resolve "$domain:$proxy_port:127.0.0.1" "$base_url/healthz"

@@ -5,9 +5,13 @@ on:
       operation:
         description: Inspect performs read-only host checks; deploy requires a dedicated HTTPS domain and TLS files.
         type: choice
-        options: [inspect, deploy]
+        options: [inspect, prepare, deploy]
         default: inspect
         required: true
+      public_base_url:
+        description: Dedicated public HTTPS origin for deploy; leave empty for inspect/prepare.
+        type: string
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -39,7 +43,7 @@ jobs:
       SSH_USER: ${{ vars.MBUSINESS_SSH_USER || 'root' }}
       SSH_PORT: ${{ vars.MBUSINESS_SSH_PORT || '22' }}
       SSH_FINGERPRINT: ${{ vars.MBUSINESS_SSH_FINGERPRINT || 'SHA256:+Tocz2KkwW2hYTRerF6SA4DwanAyaFcQa3nrl+M2dcg' }}
-      PUBLIC_BASE_URL: ${{ vars.MBUSINESS_PUBLIC_BASE_URL }}
+      PUBLIC_BASE_URL: ${{ inputs.public_base_url || vars.MBUSINESS_PUBLIC_BASE_URL }}
       OPERATION: ${{ inputs.operation }}
     steps:
       - uses: actions/checkout@v4
@@ -66,12 +70,15 @@ jobs:
           if [[ "$OPERATION" == inspect ]]; then
             printf -v command 'bash %q inspect' "$remote_script"
           else
-            [[ -n "$PUBLIC_BASE_URL" ]] || { echo 'Set MBUSINESS_PUBLIC_BASE_URL and provision dedicated TLS before deployment.'; exit 1; }
+            if [[ "$OPERATION" == deploy && -z "$PUBLIC_BASE_URL" ]]; then
+              echo 'Set public_base_url and provision dedicated TLS before deployment.'; exit 1
+            fi
+            if [[ "$OPERATION" == prepare ]]; then PUBLIC_BASE_URL=https://mbusiness.invalid:8443;fi
             archive="$RUNNER_TEMP/mbusiness-$GITHUB_SHA.tar.gz"
             git archive --format=tar.gz -o "$archive" HEAD
             checksum=$(sha256sum "$archive" | awk '{print $1}')
             sshpass -e scp -P "$SSH_PORT" "${options[@]}" "$archive" "$SSH_USER@$SSH_HOST:$remote_dir/mbusiness-$GITHUB_SHA.tar.gz"
-            printf -v command 'bash %q deploy %q %q %q %q' "$remote_script" "$GITHUB_SHA" "$remote_dir/mbusiness-$GITHUB_SHA.tar.gz" "$checksum" "$PUBLIC_BASE_URL"
+            printf -v command 'bash %q %q %q %q %q %q' "$remote_script" "$OPERATION" "$GITHUB_SHA" "$remote_dir/mbusiness-$GITHUB_SHA.tar.gz" "$checksum" "$PUBLIC_BASE_URL"
           fi
           sshpass -e ssh -p "$SSH_PORT" "${options[@]}" "$SSH_USER@$SSH_HOST" "$command"
           if [[ "$OPERATION" == deploy ]]; then
