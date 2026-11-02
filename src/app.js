@@ -213,7 +213,7 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'business.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
@@ -221,6 +221,7 @@ export async function buildApp(config, options = {}) {
   app.get('/favicon.ico', (_,reply)=>reply.code(204).send());
   app.get('/', (_, reply) => serve('business.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
+  app.get('/help/kaspi-cashier', (_, reply) => serve('cashier-guide.html', reply));
   app.get('/docs', (_, reply) => serve('docs.html', reply));
   app.get('/p/:token', (_, reply) => serve('checkout.html', reply));
   if (config.mode === 'sandbox') app.get('/sandbox/pay/:token', (_, reply) => serve('sandbox.html', reply));

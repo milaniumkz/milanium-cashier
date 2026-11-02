@@ -8,9 +8,10 @@ const health=await request('/healthz');assert.equal(health.status,200);assert.de
 assert.equal(health.headers.get('x-frame-options'),'DENY');assert.ok(health.headers.get('strict-transport-security'));
 const home=await request('/');assert.equal(home.status,200);assert.match(await home.text(),/MBusiness/);
 const docs=await request('/docs');assert.equal(docs.status,200);assert.match(await docs.text(),/API_IP_NOT_ALLOWED/);
-for(const asset of ['business.js','business.css','favicon.svg'])assert.equal((await request('/assets/'+asset)).status,200);
+const guide=await request('/help/kaspi-cashier');assert.equal(guide.status,200);assert.match(await guide.text(),/profile\/user\/cashier\/q1402/);
+for(const asset of ['business.js','business.css','cashier-guide.css','favicon.svg'])assert.equal((await request('/assets/'+asset)).status,200);
 assert.equal((await request('/operator')).status,200);
-for(const path of ['/account/overview','/admin/overview','/v1/capabilities','/v1/billing'])assert.equal((await request(path)).status,401,path);
+for(const path of ['/account/overview','/accounting/','/accounting-api/v1/companies','/admin/overview','/admin/billing/cashier','/v1/capabilities','/v1/billing'])assert.equal((await request(path)).status,401,path);
 const payload=JSON.stringify({login:'mbusiness.healthcheck',password:randomBytes(24).toString('base64url')});
 const wrongOrigin=await request('/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:payload});assert.equal(wrongOrigin.status,403);
 const login=await request('/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:base.origin},body:payload});assert.equal(login.status,401);
