@@ -129,3 +129,14 @@ Workflow:
 приватно из конфигурации на сервере, не выводя его в Actions logs или чат.
 
 Bootstrap выполнен на указанном сервере. Для других серверов сначала обязателен inspect и проверка занятых портов/сервисов.
+
+## Единый учётный кабинет
+
+Workflow также проверяет независимый PostgreSQL backend, собирает Flutter
+workspace и переносит его как artifact в собственный release MBusiness.
+`ops/github-accounting.sh` создаёт только `mbusiness-accounting-db`, отдельную
+PostgreSQL и `mbusiness-accounting.service`. Порты 55439/3191 доступны только
+на loopback. Перед миграцией выполняется свой pg_dump. Docker daemon и MTaxi
+не перезапускаются. Установка глобального PostgreSQL не выполняется.
+Приложение использует отдельную роль БД без superuser, ограниченные CPU/RAM.
+Подробнее: [ACCOUNTING.md](ACCOUNTING.md).

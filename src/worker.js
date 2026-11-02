@@ -6,7 +6,7 @@ export class Worker {
     const m = this.store.merchant(i.merchant_id);
     this.store.patch(i.id, { status: 'processing', error_code: null });
     try {
-      const result = await this.driver.create(m, i, () => this.store.patch(i.id, { submitted: 1 }));
+      const result = await (this.driver.forMerchant?.(m)||this.driver).create(m, i, () => this.store.patch(i.id, { submitted: 1 }));
       this.store.patch(i.id, { ...result, status: 'pending', next_poll: now(), error_code: null });
     } catch (e) {
       const current = this.store.invoice(i.id);
@@ -18,7 +18,8 @@ export class Worker {
   }
   async poll(i) {
     try {
-      const status = await this.driver.poll(this.store.merchant(i.merchant_id), i);
+      const merchant=this.store.merchant(i.merchant_id);
+      const status = await (this.driver.forMerchant?.(merchant)||this.driver).poll(merchant, i);
       if (!['pending', 'paid', 'declined', 'expired'].includes(status)) throw new Error('Unexpected status');
       this.store.patch(i.id, { status, error_code: null, next_poll: now() + this.config.pollMs, polled_at: now() });
     } catch (e) {

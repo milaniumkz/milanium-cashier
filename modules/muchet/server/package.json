@@ -1,0 +1,28 @@
+{
+  "name": "m-uchet-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=../.env src/main.js",
+    "dev": "node --env-file-if-exists=../.env --watch src/main.js",
+    "test": "APP_ENV=test node --env-file-if-exists=../.env --test test/api.test.js test/bank-csv.test.js test/payroll-calculation.test.js test/profit.test.js test/debt-migration.test.js test/settlement-planner.test.js test/purchase-stock.test.js test/http.test.js test/mbusiness-bridge.test.js",
+    "backup": "node --env-file-if-exists=../.env src/backup.js",
+    "migrate": "node --env-file-if-exists=../.env src/migrate.js",
+    "openapi": "node --env-file-if-exists=../.env src/openapi.js",
+    "provision-owner": "node --env-file-if-exists=../.env src/provision-owner.js",
+    "issue-recovery": "node --env-file-if-exists=../.env src/issue-recovery.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/multipart": "^9.0.0",
+    "@fastify/rate-limit": "^10.0.0",
+    "@fastify/static": "^10.1.6",
+    "@fastify/swagger": "^9.9.2",
+    "fastify": "^5.0.0",
+    "pg": "^8.23.1"
+  }
+}

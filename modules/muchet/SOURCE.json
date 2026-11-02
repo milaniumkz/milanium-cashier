@@ -1,0 +1,6 @@
+{
+  "repository": "milaniumkz/M-uchet",
+  "branch": "codex/import-source-backend",
+  "commit": "cd759aab470cda30334df0b52001cdf2a30923e3",
+  "purpose": "Independent REST accounting workspace; no production Firebase configuration or customer data copied"
+}

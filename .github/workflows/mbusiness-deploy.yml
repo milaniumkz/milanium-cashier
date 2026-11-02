@@ -20,7 +20,16 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      accounting-db:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: mbusiness_test
+          POSTGRES_PASSWORD: synthetic-actions-test-only
+          POSTGRES_DB: mbusiness_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U mbusiness_test" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,10 +40,37 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run test:http
+      - run: npm ci --no-audit --no-fund
+        working-directory: modules/muchet/server
+      - run: npm test
+        working-directory: modules/muchet/server
+        env:
+          DATABASE_URL: postgresql://mbusiness_test:synthetic-actions-test-only@127.0.0.1:5432/mbusiness_test
       - name: Validate deployment shell
         run: for script in ops/github-*.sh; do bash -n "$script"; done
+  accounting-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.6'
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: modules/muchet
+      - run: flutter test test/rest_api_client_test.dart
+        working-directory: modules/muchet
+      - run: flutter build web --release --target=lib/main_server.dart --base-href=/accounting/ --dart-define=MBUSINESS_EMBED=true --no-web-resources-cdn --pwa-strategy=none --no-wasm-dry-run
+        working-directory: modules/muchet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mbusiness-accounting-web
+          path: modules/muchet/build/web/
+          include-hidden-files: true
+          retention-days: 7
   deploy:
-    needs: validate
+    needs: [validate, accounting-ui]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: mbusiness-production
@@ -47,6 +83,10 @@ jobs:
       OPERATION: ${{ inputs.operation }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: mbusiness-accounting-web
+          path: modules/muchet/build/web/
       - name: Install SSH client helper on the Actions runner only
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
       - name: Verify SSH host identity and run isolated operation
@@ -75,7 +115,9 @@ jobs:
             fi
             if [[ "$OPERATION" == prepare ]]; then PUBLIC_BASE_URL=https://mbusiness.invalid:8443;fi
             archive="$RUNNER_TEMP/mbusiness-$GITHUB_SHA.tar.gz"
-            git archive --format=tar.gz -o "$archive" HEAD
+            git archive --format=tar -o "$RUNNER_TEMP/mbusiness-release.tar" HEAD
+            tar -rf "$RUNNER_TEMP/mbusiness-release.tar" modules/muchet/build/web
+            gzip -c "$RUNNER_TEMP/mbusiness-release.tar" > "$archive"
             checksum=$(sha256sum "$archive" | awk '{print $1}')
             sshpass -e scp -P "$SSH_PORT" "${options[@]}" "$archive" "$SSH_USER@$SSH_HOST:$remote_dir/mbusiness-$GITHUB_SHA.tar.gz"
             printf -v command 'bash %q %q %q %q %q %q' "$remote_script" "$OPERATION" "$GITHUB_SHA" "$remote_dir/mbusiness-$GITHUB_SHA.tar.gz" "$checksum" "$PUBLIC_BASE_URL"

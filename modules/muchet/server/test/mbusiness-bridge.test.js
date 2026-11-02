@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes,randomUUID } from 'node:crypto';
+import { mkdtemp,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from '../src/app.js';
+
+test('MBusiness bridge provisions own company once; tokens isolate tenants and cannot create companies',async t=>{
+ assert.equal(process.env.APP_ENV,'test');
+ const schema='test_'+randomUUID().replaceAll('-',''),dataDir=await mkdtemp(join(tmpdir(),'mbusiness-bridge-'));
+ process.env.MBUSINESS_BRIDGE_SECRET=randomBytes(32).toString('hex');
+ const app=await createApp({schema,dataDir,allowRegistration:false});
+ t.after(async()=>{await app.db.exec(`DROP SCHEMA "${schema}" CASCADE`);await app.close();await rm(dataDir,{recursive:true,force:true});delete process.env.MBUSINESS_BRIDGE_SECRET;});
+ const origin=await app.listen({host:'127.0.0.1',port:0});
+ const call=async(method,path,body,token,secret)=>{const r=await fetch(origin+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(secret?{'x-mbusiness-bridge-key':secret}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
+ const identity=()=>({userId:randomUUID(),companyId:randomUUID(),login:'synthetic.owner',companyName:'Synthetic company'}),one=identity(),two=identity();
+ assert.equal((await call('POST','/internal/mbusiness/session',one)).status,401);
+ const bridge=body=>call('POST','/internal/mbusiness/session',body,null,process.env.MBUSINESS_BRIDGE_SECRET);
+ const a=await bridge(one),b=await bridge(two);assert.equal(a.status,200,JSON.stringify(a.data));assert.equal(b.status,200,JSON.stringify(b.data));assert.notEqual(a.data.token,b.data.token);
+ const repeated=await bridge(one);assert.equal(repeated.status,200);assert.notEqual(repeated.data.token,a.data.token);
+ assert.equal((await app.db.prepare('SELECT COUNT(*) n FROM mbusiness_identities').get()).n,2);
+ assert.equal((await bridge({...one,userId:randomUUID()})).status,409);
+ const mine=await call('GET','/v1/companies',null,a.data.token);assert.equal(mine.data.length,1);assert.equal(mine.data[0].id,one.companyId);
+ assert.equal((await call('GET',`/v1/companies/${two.companyId}/resources/clients`,null,a.data.token)).status,404);
+ assert.equal((await call('POST','/v1/companies',{name:'Escaped',currency:'KZT'},a.data.token)).status,403);
+ const url=`/v1/companies/${one.companyId}/resources/clients`;assert.equal((await call('POST',url,{data:{name:'Synthetic client'}},a.data.token)).status,200);
+ assert.equal((await call('GET',url,null,b.data.token)).status,404);
+ await app.db.prepare('UPDATE sessions SET expires_at=? WHERE user_id=?').run(Date.now()-1,one.userId);
+ assert.equal((await call('GET','/v1/companies',null,a.data.token)).status,401);
+});

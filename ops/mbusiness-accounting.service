@@ -1,0 +1,22 @@
+[Unit]
+Description=MBusiness accounting API
+After=network-online.target docker.service
+[Service]
+Type=simple
+User=mbusiness
+Group=mbusiness
+WorkingDirectory=/srv/mbusiness/current/modules/muchet/server
+EnvironmentFile=/srv/mbusiness/shared/accounting/api.env
+ExecStart=/srv/mbusiness/runtime/bin/node src/main.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/mbusiness/shared/accounting/files
+MemoryMax=384M
+CPUQuota=75%
+[Install]
+WantedBy=multi-user.target

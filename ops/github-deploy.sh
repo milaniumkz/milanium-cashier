@@ -122,7 +122,7 @@ with tarfile.open(sys.argv[1]) as tar:
   path=pathlib.PurePosixPath(m.name)
   if path.is_absolute() or '..' in path.parts or m.issym() or m.islnk() or not (m.isdir() or m.isfile()):raise SystemExit('Unsafe archive entry')
   total+=m.size
-  if total>100_000_000:raise SystemExit('Archive too large')
+  if total>250_000_000:raise SystemExit('Archive too large')
   dest=root.joinpath(*path.parts)
   if m.isdir():dest.mkdir(parents=True,exist_ok=True)
   else:
@@ -132,6 +132,9 @@ with tarfile.open(sys.argv[1]) as tar:
 PY
   chown -R mbusiness:mbusiness "$pending_release"
   runuser -u mbusiness -- env PATH="$runtime/bin:/usr/bin:/bin" NPM_CONFIG_CACHE="$root/shared/npm-cache" bash -c 'cd "$1"; npm ci --omit=dev --no-audit --no-fund' _ "$pending_release"
+  if [[ -f "$pending_release/modules/muchet/server/package-lock.json" ]];then
+    runuser -u mbusiness -- env PATH="$runtime/bin:/usr/bin:/bin" NPM_CONFIG_CACHE="$root/shared/npm-cache" bash -c 'cd "$1/modules/muchet/server"; npm ci --omit=dev --no-audit --no-fund' _ "$pending_release"
+  fi
   touch "$pending_release/.mbusiness-installed"
   mv "$pending_release" "$release_dir"
 fi
@@ -208,6 +211,7 @@ install -m 0644 "$release_dir/ops/mbusiness.service" /etc/systemd/system/mbusine
 systemctl daemon-reload
 systemctl enable mbusiness.service >/dev/null
 if [[ "$mode" == deploy ]]; then systemctl enable mbusiness-proxy.service >/dev/null;fi
+if [[ "$mode" == deploy ]];then bash "$release_dir/ops/github-accounting.sh" "$release_dir";fi
 systemctl restart mbusiness.service
 ready=false
 for attempt in {1..20}; do

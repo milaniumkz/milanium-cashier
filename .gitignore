@@ -19,3 +19,8 @@ coverage/
 *.log
 config/android.live.json
 config/android.mac.json
+
+modules/muchet/build/
+modules/muchet/.dart_tool/
+modules/muchet/.flutter-plugins*
+modules/muchet/server/var/

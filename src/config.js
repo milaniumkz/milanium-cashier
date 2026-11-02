@@ -14,9 +14,11 @@ export function loadConfig(env = process.env) {
   if (production && mode === 'sandbox') throw new Error('Sandbox must not run with NODE_ENV=production.');
   const appium = new URL(env.APPIUM_URL || 'http://127.0.0.1:4723');
   if (!['http:','https:'].includes(appium.protocol) || appium.username || appium.password || appium.search || appium.hash) throw new Error('Invalid APPIUM_URL');
+  if(env.ACCOUNTING_URL){const url=new URL(env.ACCOUNTING_URL);if(url.origin!==env.ACCOUNTING_URL||url.protocol!=='http:'||url.hostname!=='127.0.0.1')throw new Error('ACCOUNTING_URL must be an exact HTTP loopback origin.');if((env.ACCOUNTING_BRIDGE_SECRET||'').length<32)throw new Error('Accounting bridge secret required');}
   const trustedProxyIps=(env.TRUSTED_PROXY_IPS||'').split(',').map(v=>v.trim()).filter(Boolean);
   if(trustedProxyIps.some(ip=>!normalizeIp(ip)))throw new Error('TRUSTED_PROXY_IPS must contain exact proxy IP addresses, not CIDR, hostnames or wildcards.');
   return {
+    accountingUrl:env.ACCOUNTING_URL||'',accountingBridgeSecret:env.ACCOUNTING_BRIDGE_SECRET||'',accountingWebRoot:env.ACCOUNTING_WEB_ROOT||'',
     production, mode, key, trustedProxyIps, kaspiApp: Object.fromEntries(Object.entries(env).filter(([name]) => name.startsWith('APP_'))), adminPassword: env.ADMIN_PASSWORD,
     baseUrl: base.origin, host: env.HOST || '127.0.0.1', port: Number(env.PORT || 3080),
     dataDir: path.resolve(env.DATA_DIR || './data'),

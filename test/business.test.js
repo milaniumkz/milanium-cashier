@@ -12,8 +12,14 @@ async function fixture(t){const config={mode:'sandbox',production:false,key:rand
  const req=(method,url,payload,cookie,idem)=>app.inject({method,url,...(payload===undefined?{}:{payload}),headers:{...(cookie?{cookie}:{}),...(idem?{'idempotency-key':idem}:{})}});
  const reg=async(login='owner.one',company='Company One')=>{const res=await req('POST','/auth/register',{login,password:'Strong-password-123',company});assert.equal(res.statusCode,201,res.body);const cookie=res.headers['set-cookie'].split(';')[0],overview=(await req('GET','/account/overview',undefined,cookie)).json();const bound=await req('POST','/account/api-server',{ip:'93.184.216.34',password:'Strong-password-123'},cookie);assert.equal(bound.statusCode,200,bound.body);return {cookie,overview,...res.json(),...bound.json()};};
  const adminRes=await req('POST','/admin/login',{password:config.adminPassword});const admin=adminRes.headers['set-cookie'].split(';')[0];
- const fund=async(owner,amount=100000,idem='topup-funding-1',reference='BANK-TRANSFER-1')=>{const r=await req('POST','/account/topups',{amount},owner.cookie,idem);assert.equal(r.statusCode,200,r.body);const done=await req('POST',`/admin/topups/${r.json().id}/review`,{decision:'approved',bank_reference:reference},admin);assert.equal(done.statusCode,200,done.body);return r.json();};
- const subscribe=async(owner,plan='start',idem='subscribe-start-1')=>{const r=await req('POST','/account/subscription',{plan},owner.cookie,idem);assert.equal(r.statusCode,200,r.body);return r.json();};
+ const fund=async()=>{}; // Direct tariff purchase never uses a wallet.
+ const subscribe=async(owner,plan='start',idem='subscribe-start-1')=>{
+  if(!app.tariffPayments.overview().configured)await req('POST','/admin/billing/cashier',{account_label:'MBusiness Billing',enabled:true},admin);
+  const r=await req('POST','/account/subscription-orders',{plan,method:'qr'},owner.cookie,idem);assert.ok([200,201].includes(r.statusCode),r.body);
+  const result=r.json(),id=result.order.id;
+  if(!result.replay){await app.services.worker.create(store.invoice(id));const invoice=store.invoice(id);store.db.prepare("UPDATE sandbox_payments SET state='paid' WHERE id=?").run(invoice.provider_id);await app.services.worker.poll(invoice);}
+  return {replay:result.replay,billing:app.services.business.snapshot(owner.overview.company.id),order:result.order};
+ };
  return {app,store,config,req,reg,admin,fund,subscribe,...app.services};}
 const payload=(id='order-1001')=>({order_id:id,amount:15000,method:'qr'});
 
@@ -38,22 +44,31 @@ test('MBusiness: tenant cannot access another company, operator routes, money ap
  const foreign=await f.app.inject({url:'/v1/invoices/'+id,headers:{authorization:'Bearer '+b.api_key}});assert.equal(foreign.statusCode,404);
 });
 
-test('MBusiness: pending topup gives no money, only one verified bank transfer can credit it',async t=>{const f=await fixture(t),a=await f.reg();const pending=await f.req('POST','/account/topups',{amount:25000},a.cookie,'manual-topup-1');const id=pending.json().id;
- assert.equal(f.business.snapshot(a.overview.company.id).balance,0);assert.equal((await f.req('POST','/account/subscription',{plan:'start'},a.cookie,'purchase-no-money')).statusCode,402);
- const duplicate=await f.req('POST','/account/topups',{amount:25000},a.cookie,'manual-topup-1');assert.equal(duplicate.json().id,id);
- assert.equal((await f.req('POST','/account/topups',{amount:30000},a.cookie,'manual-topup-1')).statusCode,409);
- assert.equal((await f.req('POST',`/admin/topups/${id}/review`,{decision:'approved'},f.admin)).statusCode,400);
- const approve=()=>f.req('POST',`/admin/topups/${id}/review`,{decision:'approved',bank_reference:'BANK-ONE'},f.admin);
- assert.equal((await approve()).statusCode,200);assert.equal((await approve()).json().replay,true);assert.equal(f.business.snapshot(a.overview.company.id).balance,25000);
- const next=(await f.req('POST','/account/topups',{amount:10000},a.cookie,'manual-topup-2')).json();assert.equal((await f.req('POST',`/admin/topups/${next.id}/review`,{decision:'approved',bank_reference:'BANK-ONE'},f.admin)).statusCode,409);
- await f.req('POST',`/admin/topups/${next.id}/review`,{decision:'rejected'},f.admin);assert.equal(f.business.snapshot(a.overview.company.id).balance,25000);
- assert.equal(f.store.db.prepare('SELECT COUNT(*) n FROM business_ledger').get().n,1);
+test('MBusiness: topups and wallet purchases are disabled; tariff waits for confirmed bank payment',async t=>{
+ const f=await fixture(t),a=await f.reg(),b=await f.reg('other.owner','Other');
+ assert.equal((await f.req('POST','/account/topups',{amount:25000},a.cookie,'manual-topup-1')).statusCode,410);
+ assert.equal((await f.req('POST','/account/subscription',{plan:'start'},a.cookie,'wallet-purchase-1')).statusCode,410);
+ assert.equal((await f.req('POST','/admin/billing/cashier',{account_label:'Billing',enabled:true},a.cookie)).statusCode,401);
+ assert.equal((await f.req('POST','/account/subscription-orders',{plan:'start',method:'qr'},a.cookie,'purchase-plan-1')).statusCode,409);
+ await f.req('POST','/admin/billing/cashier',{account_label:'Billing',enabled:true},f.admin);
+ const created=await f.req('POST','/account/subscription-orders',{plan:'start',method:'qr'},a.cookie,'purchase-plan-1');assert.equal(created.statusCode,201,created.body);const id=created.json().order.id;
+ assert.equal((await f.req('GET','/account/subscription-orders/'+id,undefined,b.cookie)).statusCode,404);
+ assert.equal(f.business.snapshot(a.overview.company.id).active,false);
+ assert.equal((await f.req('POST','/account/subscription-orders',{plan:'pro',method:'qr'},a.cookie,'purchase-plan-2')).statusCode,409);
+ assert.equal((await f.req('POST','/account/subscription-orders',{plan:'pro',method:'qr'},a.cookie,'purchase-plan-1')).statusCode,409);
+ await f.worker.create(f.store.invoice(id));assert.equal(f.business.snapshot(a.overview.company.id).active,false);
+ const invoice=f.store.invoice(id);assert.notEqual(invoice.merchant_id,a.overview.company.id);
+ f.store.db.prepare("UPDATE sandbox_payments SET state='paid' WHERE id=?").run(invoice.provider_id);await f.worker.poll(invoice);
+ const paid=f.business.snapshot(a.overview.company.id);assert.equal(paid.active,true);assert.equal(paid.balance,0);assert.equal(paid.plan.daily_limit,50);
+ await f.worker.poll(f.store.invoice(id));assert.equal(f.business.snapshot(a.overview.company.id).expires_at,paid.expires_at);
+ assert.equal(f.store.db.prepare('SELECT COUNT(*) n FROM business_ledger').get().n,0);
+ assert.equal(f.business.snapshot(b.overview.company.id).active,false);
 });
 
-test('MBusiness: subscription charges once per idempotency key and same-plan renewal extends month',async t=>{const f=await fixture(t),a=await f.reg();await f.fund(a);const first=await f.subscribe(a,'business','monthly-subscription-1');assert.equal(first.billing.balance,75000);assert.equal(first.billing.plan.daily_limit,200);
- const repeat=await f.subscribe(a,'business','monthly-subscription-1');assert.equal(repeat.replay,true);assert.equal(repeat.billing.expires_at,first.billing.expires_at);assert.equal(repeat.billing.balance,75000);
- assert.equal((await f.req('POST','/account/subscription',{plan:'pro'},a.cookie,'monthly-subscription-1')).statusCode,409);
- const next=await f.subscribe(a,'business','monthly-subscription-2');assert.ok(next.billing.expires_at>first.billing.expires_at+27*86400000);assert.equal(next.billing.balance,50000);
+test('MBusiness: direct tariff replay charges once and renewal extends month',async t=>{const f=await fixture(t),a=await f.reg();const first=await f.subscribe(a,'business','monthly-subscription-1');assert.equal(first.billing.balance,0);assert.equal(first.billing.plan.daily_limit,200);
+ const repeat=await f.subscribe(a,'business','monthly-subscription-1');assert.equal(repeat.replay,true);assert.equal(repeat.billing.expires_at,first.billing.expires_at);assert.equal(repeat.billing.balance,0);
+ assert.equal((await f.req('POST','/account/subscription-orders',{plan:'pro',method:'qr'},a.cookie,'monthly-subscription-1')).statusCode,409);
+ const next=await f.subscribe(a,'business','monthly-subscription-2');assert.ok(next.billing.expires_at>first.billing.expires_at+27*86400000);assert.equal(next.billing.balance,0);
 });
 
 test('MBusiness: 50 concurrent creates reserve only 50 slots; replay remains available after expiry',async t=>{const f=await fixture(t),a=await f.reg();await f.fund(a,10000);await f.subscribe(a);
@@ -88,12 +103,27 @@ test('MBusiness: cross-origin registration rejected and expiry invalidates store
  const a=await f.reg();f.store.db.prepare('UPDATE business_sessions SET expires_at=?').run(Date.now()-1);assert.equal((await f.req('GET','/account/overview',undefined,a.cookie)).statusCode,401);
 });
 
-test('MBusiness: individual contract requires admin quote and can be activated from company balance',async t=>{const f=await fixture(t),a=await f.reg();await f.fund(a,200000);assert.equal((await f.req('POST','/account/subscription',{plan:'individual'},a.cookie,'custom-purchase-1')).statusCode,400);
+test('MBusiness: individual contract requires admin quote and is paid directly',async t=>{const f=await fixture(t),a=await f.reg();await f.fund(a,200000);assert.equal((await f.req('POST','/account/subscription-orders',{plan:'individual',method:'qr'},a.cookie,'custom-purchase-1')).statusCode,400);
  assert.equal((await f.req('POST','/account/individual-plan',{daily_limit:1000,comment:'Contact owner'},a.cookie)).statusCode,200);
  const id=a.overview.company.id;assert.equal((await f.req('POST',`/admin/merchants/${id}/contract`,{price:120000,daily_limit:1000},a.cookie)).statusCode,401);
  assert.equal((await f.req('POST',`/admin/merchants/${id}/contract`,{price:120000,daily_limit:1000},f.admin)).statusCode,200);
- const result=await f.subscribe(a,'individual','custom-purchase-1');assert.equal(result.billing.plan.daily_limit,1000);assert.equal(result.billing.balance,80000);
+ const result=await f.subscribe(a,'individual','custom-purchase-1');assert.equal(result.billing.plan.daily_limit,1000);assert.equal(result.billing.balance,0);
  assert.equal((await f.req('POST',`/admin/merchants/${id}/contract`,{price:130000,daily_limit:1500},f.admin)).statusCode,409);
 });
 
 test('MBusiness: day boundary follows Asia/Almaty, not UTC',()=>{assert.equal(businessDay(Date.parse('2026-11-02T18:59:59Z')),'2026-11-02');assert.equal(businessDay(Date.parse('2026-11-02T19:00:00Z')),'2026-11-03');});
+
+test('MBusiness: concurrent tariff requests share one invoice; unknown payment blocks another charge',async t=>{
+ const f=await fixture(t),a=await f.reg();await f.req('POST','/admin/billing/cashier',{account_label:'Billing',enabled:true},f.admin);
+ const body={plan:'business',method:'phone',customer_phone:'+77001234567'};
+ assert.equal((await f.req('POST','/account/subscription-orders',{plan:'business',method:'phone'},a.cookie,'phone-without-number')).statusCode,400);
+ assert.equal((await f.req('POST','/account/subscription-orders',{...body,amount:1},a.cookie,'price-override-key')).statusCode,400);
+ const responses=await Promise.all(Array.from({length:10},()=>f.req('POST','/account/subscription-orders',body,a.cookie,'same-tariff-command')));
+ assert.equal(responses.filter(r=>r.statusCode===201).length,1);assert.equal(new Set(responses.map(r=>r.json().order.id)).size,1);
+ const id=responses[0].json().order.id,invoice=f.store.invoice(id);assert.equal(invoice.amount,25000);assert.equal(invoice.method,'phone');assert.ok(!JSON.stringify(invoice).includes('+77001234567'));
+ f.store.patch(id,{status:'processing',submitted:1});f.store.patch(id,{status:'unknown'});
+ assert.equal(f.business.snapshot(a.overview.company.id).active,false);
+ assert.equal((await f.req('POST','/account/subscription-orders',{plan:'business',method:'link'},a.cookie,'another-tariff-command')).statusCode,409);
+ assert.equal((await f.req('POST','/account/subscription-orders',body,a.cookie,'same-tariff-command')).statusCode,200);
+ assert.equal((await f.req('POST','/admin/billing/cashier',{account_label:'Another Billing',enabled:true},f.admin)).statusCode,409);
+});

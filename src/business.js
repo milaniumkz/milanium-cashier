@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { AppError, now } from './db.js';
 import { hash, token, seal } from './crypto.js';
 import { merchantSchema } from './config.js';
+import { registerAccounting } from './accounting.js';
+import { registerTariffPayments } from './tariff-payments.js';
 import { publicServerIp } from './api-access.js';
 import { validateWebhookUrl } from './webhooks.js';
 
@@ -38,7 +40,8 @@ export class Business {
  hasOpenPayments(id){return !!this.db.prepare("SELECT id FROM invoices WHERE merchant_id=? AND status IN ('queued','processing','pending','unknown','requires_auth') LIMIT 1").get(id);}
  offer(id){const row=this.db.prepare('SELECT price,daily_limit FROM business_contracts WHERE merchant_id=?').get(id);return row?{id:'individual',name:'Индивидуальный',...row}:null;}
  snapshot(id,at=now()){const w=this.db.prepare('SELECT * FROM business_wallets WHERE merchant_id=?').get(id);if(!w)return null;
-  const plan=plans.find(p=>p.id===w.plan_id)||(w.plan_id==='individual'?this.offer(id):null);const used=this.db.prepare('SELECT COUNT(*) n FROM business_usage WHERE merchant_id=? AND day=? AND active=1').get(id,businessDay(at)).n;
+  const sourcePlan=plans.find(p=>p.id===w.plan_id)||(w.plan_id==='individual'?this.offer(id):null);const plan=sourcePlan?{...sourcePlan}:null;const used=this.db.prepare('SELECT COUNT(*) n FROM business_usage WHERE merchant_id=? AND day=? AND active=1').get(id,businessDay(at)).n;
+  if(plan){if(w.plan_price!=null)plan.price=w.plan_price;if(w.plan_daily_limit!=null)plan.daily_limit=w.plan_daily_limit;}
   const active=!!plan&&w.expires_at>at;return {balance:w.balance,plan,expires_at:w.expires_at,active,used_today:used,remaining_today:active?Math.max(0,plan.daily_limit-used):0,timezone:'Asia/Almaty'};}
  admit(id,at){if(!this.db.prepare('SELECT merchant_id FROM business_wallets WHERE merchant_id=?').get(id))return null;
   const b=this.snapshot(id,at);if(!b.active)throw new AppError('SUBSCRIPTION_REQUIRED','Выберите и оплатите тариф для выставления счетов.',402);
@@ -52,7 +55,7 @@ export class Business {
    if(previous){if(previous.detail!==p.id)throw new AppError('IDEMPOTENCY_CONFLICT','Ключ уже использован для другого тарифа.',409);return {replay:true,billing:this.snapshot(id)};}
    const w=this.snapshot(id);if(!w||w.balance<p.price)throw new AppError('INSUFFICIENT_BALANCE','Недостаточно средств для оплаты тарифа.',402);
    const until=nextMonth(w.active&&w.plan.id===p.id?w.expires_at:now());
-   this.db.prepare('UPDATE business_wallets SET balance=balance-?,plan_id=?,expires_at=? WHERE merchant_id=?').run(p.price,p.id,until,id);
+   this.db.prepare('UPDATE business_wallets SET balance=balance-?,plan_id=?,expires_at=?,plan_price=?,plan_daily_limit=? WHERE merchant_id=?').run(p.price,p.id,until,p.price,p.daily_limit,id);
    this.db.prepare('INSERT INTO business_ledger VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(),id,-p.price,w.balance-p.price,'subscription',ref,p.id,now());
    this.store.audit(id,null,'billing.subscription',p.id);return {replay:false,billing:this.snapshot(id)};
   });}
@@ -83,6 +86,8 @@ export function registerBusiness(app,{store,config,driver,worker,create,admin}){
  const cookieOptions={httpOnly:true,secure:config.production,sameSite:'strict',path:'/',maxAge:12*3600};
  async function issue(user,reply){const value=token();store.db.prepare('DELETE FROM business_sessions WHERE expires_at<?').run(now());store.db.prepare('INSERT INTO business_sessions VALUES(?,?,?)').run(hash(value),user.id,now()+12*3600000);reply.setCookie('mb_session',value,cookieOptions);}
  const member=async req=>{const u=store.db.prepare('SELECT u.id,u.login,u.merchant_id FROM business_sessions s JOIN business_users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>?').get(hash(req.cookies.mb_session||''),now());if(!u)throw new AppError('UNAUTHORIZED','Войдите в MBusiness.',401);req.member=u;req.company=store.merchant(u.merchant_id);};
+ registerAccounting(app,{config,member});
+ registerTariffPayments(app,{store,business,config,driver,worker,member,admin,getPlans:id=>[...plans,...(business.offer(id)?[business.offer(id)]:[])]});
  const limits={config:{rateLimit:{max:8,timeWindow:'1 minute'}}};
  app.post('/auth/register',limits,async(req,reply)=>{
   const v=z.object({login:loginSchema,password:passwordSchema,company:z.string().trim().min(2).max(100)}).strict().parse(req.body);
@@ -108,7 +113,7 @@ export function registerBusiness(app,{store,config,driver,worker,create,admin}){
   const digest=await passwordHash(v.password);store.transaction(()=>{store.db.prepare('UPDATE business_users SET password_hash=? WHERE id=?').run(digest,u.id);store.db.prepare('DELETE FROM business_sessions WHERE user_id=?').run(u.id);});await issue(u,reply);return {ok:true};
  });
  app.get('/account/overview',{preHandler:member},async req=>{
-  const id=req.company.id;return {user:{login:req.member.login},company:store.merchantPublic(req.company),mode:config.mode,capabilities:driver.capabilities(),billing:business.snapshot(id),plans:[...plans,...(business.offer(id)?[business.offer(id)]:[])],
+  const id=req.company.id;return {tariff_payments:store.tariffs.orders(id),billing_cashier_available:store.tariffs.overview().enabled&&store.tariffs.overview().connected,user:{login:req.member.login},company:store.merchantPublic(req.company),mode:config.mode,capabilities:driver.capabilities(),billing:business.snapshot(id),plans:[...plans,...(business.offer(id)?[business.offer(id)]:[])],
    invoices:store.listInvoices(id,200).map(i=>store.invoicePublic(i)),
    stats:store.db.prepare('SELECT status,COUNT(*) count,SUM(amount) amount FROM invoices WHERE merchant_id=? GROUP BY status').all(id),
    daily:store.db.prepare('SELECT created_at,amount,status FROM invoices WHERE merchant_id=? AND created_at>=? ORDER BY created_at').all(id,now()-7*86400000),
@@ -116,8 +121,8 @@ export function registerBusiness(app,{store,config,driver,worker,create,admin}){
    topups:store.db.prepare('SELECT id,amount,status,created_at,reviewed_at FROM business_topups WHERE merchant_id=? ORDER BY created_at DESC LIMIT 30').all(id),
    events:store.db.prepare('SELECT id,invoice_id,attempts,delivered_at,last_error,dead FROM events WHERE merchant_id=? ORDER BY next_at DESC LIMIT 50').all(id)};
  });
- app.post('/account/topups',{preHandler:member},async req=>{const v=z.object({amount:z.number().int().min(1000).max(10000000)}).strict().parse(req.body);return business.topup(req.company.id,v.amount,req.headers['idempotency-key']);});
- app.post('/account/subscription',{preHandler:member},async req=>{const v=z.object({plan:z.enum(['start','business','pro','pro_max','individual'])}).strict().parse(req.body);return business.subscribe(req.company.id,v.plan,req.headers['idempotency-key']);});
+ app.post('/account/topups',{preHandler:member},async()=>{throw new AppError('TOPUPS_DISABLED','Пополнение баланса отключено. Оплачивайте тариф напрямую.',410);});
+ app.post('/account/subscription',{preHandler:member},async()=>{throw new AppError('DIRECT_PAYMENT_REQUIRED','Оплачивайте тариф через /account/subscription-orders.',410);});
  app.post('/account/individual-plan',{preHandler:member,config:{rateLimit:{max:5,timeWindow:'1 minute'}}},async req=>{const v=z.object({daily_limit:z.number().int().min(701).max(100000),comment:z.string().max(1000).default('')}).strict().parse(req.body);store.audit(req.company.id,null,'billing.individual_requested',JSON.stringify(v));return {ok:true};});
  app.post('/account/invoices',{preHandler:member},async(req,reply)=>{const result=create(req.company,req.body,req.headers['idempotency-key']);reply.code(result.replay?200:201);return {...store.invoicePublic(result.invoice),replay:result.replay};});
  const ownInvoice=req=>{const i=store.invoice(req.params.id);if(!i||i.merchant_id!==req.company.id)throw new AppError('NOT_FOUND','Счёт не найден.',404);return i;};

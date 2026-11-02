@@ -106,10 +106,10 @@ export class Store {
     this.audit(id, null, 'automation.disconnected');
   }
   setMerchantState(id, state) { this.db.prepare('UPDATE merchants SET state=? WHERE id=?').run(state, id); }
-  createInvoice(m, v, idem) {
+  createInvoice(m, v, idem, insideTransaction = false) {
     if (!/^[\w.:-]{8,120}$/.test(idem || '')) throw new AppError('INVALID_IDEMPOTENCY_KEY', 'Нужен Idempotency-Key длиной 8–120 символов.');
     const fingerprint = hash(JSON.stringify(v));
-    return this.transaction(() => {
+    const execute = () => {
       const existing = this.db.prepare('SELECT * FROM invoices WHERE merchant_id=? AND (idem=? OR order_id=?)').all(m.id, idem, v.order_id);
       if (existing.length) {
         if (existing.length !== 1 || existing[0].fingerprint !== fingerprint || existing[0].idem !== idem) throw new AppError('IDEMPOTENCY_CONFLICT', 'Этот заказ или ключ уже использован с другими параметрами. Повторите исходный Idempotency-Key.', 409);
@@ -124,7 +124,8 @@ export class Store {
       this.billing?.reserve(m.id, id, billingDay);
       this.audit(m.id, id, 'invoice.queued');
       return { invoice: this.invoice(id), replay: false };
-    });
+    };
+    return insideTransaction ? execute() : this.transaction(execute);
   }
   invoice(id) { return this.db.prepare('SELECT * FROM invoices WHERE id=?').get(id); }
   byPublicToken(t) { return this.db.prepare('SELECT * FROM invoices WHERE public_token=?').get(t); }
@@ -150,6 +151,7 @@ export class Store {
       this.db.prepare(`UPDATE invoices SET ${entries.map(([k]) => `${k}=?`).join(',')},updated_at=? WHERE id=?`).run(...entries.map(([,v]) => v), now(), id);
       const current = this.invoice(id);
       this.billing?.release(current);
+      this.tariffs?.invoiceChanged(current);
       if (changes.status && changes.status !== old.status) {
         this.audit(old.merchant_id, id, 'invoice.status', `${old.status} → ${changes.status}`);
         const eventId = randomUUID();
