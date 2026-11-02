@@ -34,7 +34,10 @@ export async function openDatabase({ connectionString = process.env.DATABASE_URL
   try {
     await transaction(db, async () => {
       await db.exec("SELECT pg_advisory_xact_lock(62700321)");
-      await db.exec(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+      // Existing production schemas do not require database CREATE privileges.
+      if (!await db.prepare('SELECT 1 FROM pg_namespace WHERE nspname=?').get(schema)) {
+        await db.exec(`CREATE SCHEMA "${schema}"`);
+      }
       await db.exec('CREATE TABLE IF NOT EXISTS schema_versions(version INTEGER PRIMARY KEY)');
       if (!await db.prepare('SELECT 1 FROM schema_versions WHERE version=2').get()) {
         await db.exec(await readFile(new URL('../migrations/001_initial.sql', import.meta.url), 'utf8'));
