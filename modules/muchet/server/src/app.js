@@ -1,5 +1,5 @@
 import { registerRetail } from './retail.js';
-import { createGoodsOrder,getGoodsOrder,reserveGoodsOrder,shipGoodsOrder,receiveGoodsPayment } from './goods-commands.js';
+import { createGoodsOrder,getGoodsOrder,reserveGoodsOrder,shipGoodsOrder,receiveGoodsPayment,receiveInventory } from './goods-commands.js';
 import { registerCompanySetup } from './company-setup.js';
 import { registerMBusinessBridge } from './mbusiness-bridge.js';
 import { registerStockCounts } from './stock-counts.js';
@@ -55,6 +55,7 @@ export async function createApp(options = {}) {
     if(bearer){const session=await db.prepare('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(bearer),Date.now());if(session)return 'user:'+session.user_id;}
     const token=request.headers['x-retail-device-token'];
     if(typeof token==='string'&&/^[A-Za-z0-9_-]{43}$/.test(token)){const device=await db.prepare('SELECT id FROM retail_count_devices WHERE token_hash=? AND NOT revoked AND token_expires>?').get(hashToken(token),Date.now());if(device)return 'device:'+device.id;}
+    const terminalToken=request.headers['x-retail-terminal-token'];if(typeof terminalToken==='string'&&/^[A-Za-z0-9_-]{43}$/.test(terminalToken)){const terminal=await db.prepare('SELECT id FROM retail_terminals WHERE token_hash=? AND NOT revoked').get(hashToken(terminalToken));if(terminal)return 'terminal:'+terminal.id;}
     return 'ip:'+request.ip;
   } });
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 0 } });
@@ -121,6 +122,8 @@ export async function createApp(options = {}) {
         if (old.fingerprint !== fingerprint) fail(409, 'idempotency_conflict');
         return JSON.parse(old.response);
       }
+      const guardedOrder=request.params.orderId??request.params.id;
+      if(guardedOrder&&request.url.includes('/orders/')&&await db.prepare("SELECT 1 FROM retail_terminal_payments WHERE company_id=? AND order_id=? AND state IN ('QUEUED','DISPATCHED','UNKNOWN','PAID')").get(company.id,guardedOrder))fail(409,'terminal_payment_active');
       const result = await fn(company);
       (await audit(request, action, result.id ?? company.id));
       (await db.prepare('INSERT INTO idempotency VALUES(?,?,?,?,?)').run(company.id, request.user.id, key, fingerprint, JSON.stringify(result)));
@@ -291,19 +294,7 @@ export async function createApp(options = {}) {
   });
 
   app.post('/v1/companies/:companyId/inventory/receipts', { preHandler: auth }, async request => (await command(request, 'inventory.receive', 'inventory.receive', async company => {
-    const body = object(request.body);
-    const parsed={scope:scope(body.scope),projectId:await projectReference(db,company.id,body.projectId)};
-    const item={productId:text(body.productId,'productId'),warehouseId:text(body.warehouseId,'warehouseId'),quantity:integer(body.quantity,'quantity',1)},unitCost=integer(body.unitCost,'unitCost');
-    for(const [kind,id]of [['nomenklatura',item.productId],['warehouses',item.warehouseId]])if(!await db.prepare('SELECT 1 FROM documents WHERE company_id=? AND kind=? AND id=?').get(company.id,kind,id))fail(404,'catalog_reference_not_found');
-    integer(item.quantity * unitCost, 'inventory_value');
-    const id = randomUUID();
-    (await db.prepare('INSERT INTO batches(id,company_id,product_id,warehouse_id,scope,quantity,reserved,unit_cost,created_at) VALUES(?,?,?,?,?,?,0,?,?)').run(id, company.id, item.productId, item.warehouseId, parsed.scope, item.quantity, unitCost, now()));
-    const amount = item.quantity * unitCost;
-    const date=businessDate(body.businessDate,company.timezone);
-    const posting=amount ? await postJournal(db, company, { scope: parsed.scope, projectId:parsed.projectId,businessDate:date, description: `Receipt ${id}`, lines: [{ account: 'inventory', debit: amount }, { account: 'payables', credit: amount }] }) : null;
-    const data={ id, ...item, unitCost, cost:amount, scope: parsed.scope, projectId:parsed.projectId,businessDate:date,journalId:posting?.id??null };
-    await db.prepare('INSERT INTO movements VALUES(?,?,?,?,?)').run(id,company.id,'RECEIPT',JSON.stringify(data),now());
-    return data;
+    return receiveInventory(db,company,object(request.body));
   })));
   app.get('/v1/companies/:companyId/inventory', { preHandler: auth }, async request => {
     const company=await access(request, 'inventory.read');
@@ -474,7 +465,7 @@ export async function createApp(options = {}) {
   registerAssetRoutes(app,{db,auth,access,command,pageLimit,object});
   const commercial=registerCommercialRoutes(app, { db, auth, access, command, pageLimit, object });
   registerBankRoutes(app, { db, auth, access, command, pageLimit, object, ...commercial });
-  await registerRetail(app,{db,auth,access,command,object});
+  await registerRetail(app,{db,auth,access,command,object,fiscalTransport:options.fiscalTransport,fiscalWorker:options.fiscalWorker});
   await registerCompanySetup(app,{db,auth,access});
   registerBusinessRoutes(app, { db, auth, access, command, pageLimit, object, audit });
   if (options.webRoot) await app.register(staticFiles, {root:resolve(options.webRoot),dotfiles:'deny',index:'index.html',cacheControl:true,maxAge:0});

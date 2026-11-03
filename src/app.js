@@ -214,7 +214,7 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'accounting-frame.js', 'retail.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
@@ -224,6 +224,9 @@ export async function buildApp(config, options = {}) {
   app.get('/favicon.ico', (_,reply)=>reply.code(204).send());
   app.get('/', (_, reply) => serve('business.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
+  app.get('/downloads/terminal-agent.mjs',async(_,reply)=>reply.header('Content-Disposition','attachment; filename=mbusiness-terminal-agent.mjs').type('text/javascript; charset=utf-8').send(await readFile(path.join(directory,'../public/terminal-agent.mjs'))));
+  app.get('/help/fiscal',(_,reply)=>serve('fiscal-guide.html',reply));
+  app.get('/help/terminals',(_,reply)=>serve('terminal-guide.html',reply));
   app.get('/help/store',(_,reply)=>serve('store-guide.html',reply));
   app.get('/help/kaspi-cashier', (_, reply) => serve('cashier-guide.html', reply));
   app.get('/docs', (_, reply) => serve('docs.html', reply));

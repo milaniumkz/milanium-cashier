@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { fail,integer,text,businessDate } from './security.js';
-import { orderInput,allocate,postJournal } from './accounting.js';
+import { fail,integer,text,businessDate,scope } from './security.js';
+import { orderInput,allocate,postJournal,projectReference } from './accounting.js';
 import { projectOrderPayments } from './order-payments.js';
 const now=()=>new Date().toISOString();
 
@@ -77,4 +77,19 @@ export async function receiveGoodsPayment(db,company,orderId,input,authorizeWall
     await projectOrderPayments(db,company,order);
     if (paid + amount === order.data.total) (await db.prepare("UPDATE orders SET status='CLOSED' WHERE id=?").run(order.id));
     return { id, orderId: order.id, amount, outstanding: order.data.total - paid - amount };
+}
+
+export async function receiveInventory(db,company,body){
+    const parsed={scope:scope(body.scope),projectId:await projectReference(db,company.id,body.projectId)};
+    const item={productId:text(body.productId,'productId'),warehouseId:text(body.warehouseId,'warehouseId'),quantity:integer(body.quantity,'quantity',1)},unitCost=integer(body.unitCost,'unitCost');
+    for(const [kind,id]of [['nomenklatura',item.productId],['warehouses',item.warehouseId]])if(!await db.prepare('SELECT 1 FROM documents WHERE company_id=? AND kind=? AND id=?').get(company.id,kind,id))fail(404,'catalog_reference_not_found');
+    integer(item.quantity * unitCost, 'inventory_value');
+    const id = randomUUID();
+    (await db.prepare('INSERT INTO batches(id,company_id,product_id,warehouse_id,scope,quantity,reserved,unit_cost,created_at) VALUES(?,?,?,?,?,?,0,?,?)').run(id, company.id, item.productId, item.warehouseId, parsed.scope, item.quantity, unitCost, now()));
+    const amount = item.quantity * unitCost;
+    const date=businessDate(body.businessDate,company.timezone);
+    const posting=amount ? await postJournal(db, company, { scope: parsed.scope, projectId:parsed.projectId,businessDate:date, description: `Receipt ${id}`, lines: [{ account: 'inventory', debit: amount }, { account: 'payables', credit: amount }] }) : null;
+    const data={ id, ...item, unitCost, cost:amount, scope: parsed.scope, projectId:parsed.projectId,businessDate:date,journalId:posting?.id??null };
+    await db.prepare('INSERT INTO movements VALUES(?,?,?,?,?)').run(id,company.id,'RECEIPT',JSON.stringify(data),now());
+    return data;
 }
