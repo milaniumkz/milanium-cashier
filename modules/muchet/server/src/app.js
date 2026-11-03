@@ -1,3 +1,4 @@
+import { registerCompanySetup } from './company-setup.js';
 import { registerMBusinessBridge } from './mbusiness-bridge.js';
 import { registerStockCounts } from './stock-counts.js';
 import { registerInventoryReports } from './inventory-reports.js';
@@ -522,6 +523,7 @@ export async function createApp(options = {}) {
   registerAssetRoutes(app,{db,auth,access,command,pageLimit,object});
   const commercial=registerCommercialRoutes(app, { db, auth, access, command, pageLimit, object });
   registerBankRoutes(app, { db, auth, access, command, pageLimit, object, ...commercial });
+  await registerCompanySetup(app,{db,auth,access});
   registerBusinessRoutes(app, { db, auth, access, command, pageLimit, object, audit });
   if (options.webRoot) await app.register(staticFiles, {root:resolve(options.webRoot),dotfiles:'deny',index:'index.html',cacheControl:true,maxAge:0});
   await app.ready();

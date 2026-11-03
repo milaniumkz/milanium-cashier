@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID,randomBytes } from 'node:crypto';
+import { mkdtemp,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from '../src/app.js';
+
+test('Company setup enforces order, saves drafts across restart, isolates tenants and never fabricates balances',async t=>{
+ const schema='test_'+randomUUID().replaceAll('-',''),dataDir=await mkdtemp(join(tmpdir(),'mbusiness-setup-'));
+ process.env.MBUSINESS_BRIDGE_SECRET=randomBytes(32).toString('hex');let app=await createApp({schema,dataDir}),origin=await app.listen({host:'127.0.0.1',port:0});
+ t.after(async()=>{await app.db.exec(`DROP SCHEMA "${schema}" CASCADE`);await app.close();await rm(dataDir,{recursive:true,force:true});delete process.env.MBUSINESS_BRIDGE_SECRET;});
+ const request=async(path,method='GET',body,token,key)=>{const r=await fetch(origin+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(key?{'idempotency-key':key}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
+ const owner=async()=>{const id=randomUUID();const r=await fetch(origin+'/internal/mbusiness/session',{method:'POST',headers:{'content-type':'application/json','x-mbusiness-bridge-key':process.env.MBUSINESS_BRIDGE_SECRET},body:JSON.stringify({userId:randomUUID(),companyId:id,login:'synthetic.owner',companyName:'Synthetic company'})});assert.equal(r.status,200);return {id,token:(await r.json()).token};};
+ const one=await owner(),two=await owner(),base='/v1/companies/'+one.id,call=(path,method='GET',body,key)=>request(base+path,method,body,one.token,key);
+ assert.equal((await request(base+'/setup')).status,401);assert.equal((await request(base+'/setup','GET',null,two.token)).status,404);
+ let state=(await call('/setup')).data;assert.equal(state.current_step,'company');assert.equal(state.finished,false);
+ const action=async(step,action,extra={})=>{const r=await call('/setup','POST',{step,action,version:state.version,...extra});if(r.status===200)state=r.data;return r;};
+ assert.equal((await action('company','skipped')).status,400);assert.equal((await action('wallets','skipped')).status,409);assert.equal((await action('company','done')).status,409);assert.equal((await action(null,'finish')).status,409);
+ assert.equal((await call('/setup/draft','PATCH',{step:'company',data:{password:'never-store-secrets'}})).status,400);
+ await call('/setup/draft','PATCH',{step:'company',data:{legalName:'Saved company draft'}});assert.equal((await call('/setup')).data.drafts.company.legalName,'Saved company draft');
+ const settings=await call('/settings','PUT',{version:0,legalName:'Synthetic company',identifier:null,legalForm:'TOO',taxRegime:'GENERAL',vatRegistered:false},'setup-company-one');assert.equal(settings.status,200,JSON.stringify(settings.data));assert.equal((await action('company','done')).status,200);
+ assert.equal((await call('/setup/draft','PATCH',{step:'company',data:{legalName:'Late stale draft'}})).data.saved,false);
+ await call('/setup/draft','PATCH',{step:'details',data:{legalAddress:'Draft address retained'}});await action('details','skipped');
+ assert.equal((await action('wallets','done')).status,409);
+ const wallet=(await call('/wallets','POST',{name:'Synthetic cash',scope:'ACCOUNTING'},'setup-wallet-one')).data;const replay=(await call('/wallets','POST',{name:'Synthetic cash',scope:'ACCOUNTING'},'setup-wallet-one')).data;assert.equal(wallet.id,replay.id);assert.equal((await call('/setup')).data.counts.wallets,1);
+ await action('wallets','done');for(const step of ['projects','warehouses','partners','catalog'])assert.equal((await action(step,'skipped')).status,200);
+ assert.equal((await action('balances','done',{balanceMode:'zero',startDate:'2026-11-03'})).status,200);assert.equal((await action(null,'finish')).status,200);assert.equal(state.finished,true);
+ assert.equal((await call('/wallets')).data.items[0].balance,0);assert.equal((await app.db.prepare('SELECT count(*) n FROM journal WHERE company_id=?').get(one.id)).n,0);
+ const stale=await call('/setup','POST',{action:'finish',version:0});assert.equal(stale.status,409);
+ await action('details','resume');assert.equal(state.current_step,'details');assert.equal(state.drafts.details.legalAddress,'Draft address retained');
+ await app.close();app=await createApp({schema,dataDir});origin=await app.listen({host:'127.0.0.1',port:0});state=(await call('/setup')).data;assert.equal(state.current_step,'details');assert.equal(state.drafts.details.legalAddress,'Draft address retained');assert.equal(state.states.wallets,'done');
+ await action('details','skipped');await action('balances','resume');
+ assert.equal((await call('/wallets/'+wallet.id+'/transactions','POST',{amount:100,type:'CAPITAL',description:'Synthetic starting capital'},'setup-capital-test')).status,200);
+ assert.equal((await action('balances','done',{balanceMode:'zero',startDate:'2026-11-03'})).status,409);assert.equal((await action('balances','done',{balanceMode:'reviewed',startDate:'2026-11-03'})).status,200);assert.equal((await call('/wallets')).data.items[0].balance,100);
+ assert.deepEqual((await request('/v1/companies/'+two.id+'/setup','GET',null,two.token)).data.states,{});
+});
