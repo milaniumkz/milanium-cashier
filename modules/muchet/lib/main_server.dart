@@ -118,6 +118,7 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
       sections.entries.where((e) => visible(e.key));
   DateTimeRange? period;
   String date(DateTime value) => value.toIso8601String().substring(0, 10);
+  void Function()? stopParentSections;
   bool busy = false;
   bool creatingCompany = false;
   bool canCreateCompanies = true;
@@ -126,14 +127,21 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
   void initState() {
     super.initState();
     if (mbusinessEmbed) {
+      final requested=Uri.base.queryParameters['section'];
+      if(sections.containsKey(requested)) section=requested!;
+      stopParentSections=watchMBusinessSection((key){
+        if(!mounted || !sections.containsKey(key) || section==key) return;
+        navigator.currentState?.popUntil((route)=>route.isFirst);
+        setState(()=>section=key);
+        if(company!=null) notifyMBusinessAccountingReady(true);
+      });
       WidgetsBinding.instance.addPostFrameCallback((_) => perform(() async {
         api.acceptCookieSession();
         canCreateCompanies = false;
         companies = await IdentityRepository(api).companies();
         if (companies.isNotEmpty) {
-          company = companies.first;
-          final requested = Uri.base.queryParameters['section'];
-          if (sections.containsKey(requested)) section = requested!;
+          setState(()=>company = companies.first);
+          WidgetsBinding.instance.addPostFrameCallback((_){if(mounted)notifyMBusinessAccountingReady(true);});
           await refresh();
         }
       }));
@@ -156,6 +164,7 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
 
   @override
   void dispose() {
+    stopParentSections?.call();
     api.onUnauthorized = null;
     api.close();
     login.dispose();
@@ -191,6 +200,7 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
     } finally {
       if (mounted) {
         setState(() => busy = false);
+        if(mbusinessEmbed) WidgetsBinding.instance.addPostFrameCallback((_){if(mounted)notifyMBusinessAccountingReady(company!=null,error);});
       }
     }
   }

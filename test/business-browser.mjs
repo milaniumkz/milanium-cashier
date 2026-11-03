@@ -26,6 +26,18 @@ try{
  await page.locator('#setup-form [name=name]').fill('Касса Example');await page.locator('#setup-form [type=submit]').click();
  for(let step=0;step<4;step++){await page.locator('#setup-skip').click();}
  await page.locator('#setup-form [name=startDate]').fill('2026-11-03');await page.locator('#setup-form [name=balanceMode]').selectOption('zero');await page.locator('#setup-form [type=submit]').click();await page.locator('#setup-finish').click();await page.locator('#accounting-frame').waitFor();await page.frameLocator('#accounting-frame').locator('flutter-view').waitFor();await page.screenshot({path:screenshots+'/02-accounting.png',fullPage:true});
+ await page.locator('.accounting-loading').waitFor({state:'hidden',timeout:45000});
+ const originalAccountingFrame=page.frames().find(f=>f.url().includes('/accounting/'));
+ await originalAccountingFrame.evaluate(()=>document.querySelector('flt-semantics-placeholder')?.click());
+ let repeatedBundles=0;const countBundle=request=>{if(/main\.dart\.js|canvaskit\.wasm/.test(request.url()))repeatedBundles++;};page.on('request',countBundle);
+ for(const [section,label] of [['cash','Касса и денежные счета'],['inventory','Складские остатки'],['debts','Добавить начальный долг'],['catalog','Товары и услуги'],['home','Обновить главную']]){
+  await page.locator('.side [data-view='+section+']').click();
+  assert.equal(page.frames().find(f=>f.url().includes('/accounting/')),originalAccountingFrame,'accounting frame was recreated for '+section);
+  await originalAccountingFrame.getByText(label,{exact:true}).or(originalAccountingFrame.getByLabel(label,{exact:true})).first().waitFor({state:'visible',timeout:15000});
+  assert.equal(await page.locator('.accounting-loading').isVisible(),false);
+ }
+ page.off('request',countBundle);assert.equal(repeatedBundles,0,'navigation downloaded the accounting engine again');
+
  await page.setViewportSize({width:1366,height:650});
  const sideBounds=await page.locator('.side-bottom').boundingBox();assert.ok(sideBounds.y+sideBounds.height<=650,'sidebar footer is clipped on a short desktop viewport');
  await page.setViewportSize({width:1440,height:1050});
