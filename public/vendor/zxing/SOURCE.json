@@ -1,0 +1,8 @@
+{
+  "name": "@zxing/library",
+  "version": "0.21.3",
+  "integrity": "sha512-hZHqFe2JyH/ZxviJZosZjV+2s6EDSY0O24R+FQmlWZBZXP9IqMo7S3nb3+2LBWxodJQkSurdQGnqE7KXqrYgow==",
+  "shasum": "0a4cb777701884131832b05922d7e88ef1b87ab4",
+  "source": "https://www.npmjs.com/package/@zxing/library/v/0.21.3",
+  "bundle_sha256": "d7cc8f69dd70bdcf3ac00c9ae572bf2acb9f4132ba379c72df842e4db918652d"
+}

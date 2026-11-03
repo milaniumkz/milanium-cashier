@@ -1,3 +1,5 @@
+import { registerRetail } from './retail.js';
+import { createGoodsOrder,getGoodsOrder,reserveGoodsOrder,shipGoodsOrder,receiveGoodsPayment } from './goods-commands.js';
 import { registerCompanySetup } from './company-setup.js';
 import { registerMBusinessBridge } from './mbusiness-bridge.js';
 import { registerStockCounts } from './stock-counts.js';
@@ -48,7 +50,13 @@ export async function createApp(options = {}) {
   app.decorate('db', db);
   app.addHook('onClose', async () => db.close());
   await app.register(cors, { origin: options.corsOrigin ?? process.env.CORS_ORIGIN ?? false, credentials: false });
-  await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
+  await app.register(rateLimit, { max: 300, timeWindow: '1 minute',keyGenerator:async request=>{
+    const bearer=request.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
+    if(bearer){const session=await db.prepare('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(bearer),Date.now());if(session)return 'user:'+session.user_id;}
+    const token=request.headers['x-retail-device-token'];
+    if(typeof token==='string'&&/^[A-Za-z0-9_-]{43}$/.test(token)){const device=await db.prepare('SELECT id FROM retail_count_devices WHERE token_hash=? AND NOT revoked AND token_expires>?').get(hashToken(token),Date.now());if(device)return 'device:'+device.id;}
+    return 'ip:'+request.ip;
+  } });
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 0 } });
   await app.register(swagger, { openapi: { info: { title: 'MBusiness accounting API', version: '0.2.0' },
     components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } } },
@@ -309,20 +317,9 @@ export async function createApp(options = {}) {
     return orderInput(db,company.id,body,company.timezone,previous);
   });
   app.post('/v1/companies/:companyId/orders', { preHandler: auth }, async request => (await command(request, 'orders.write', 'order.create', async company => {
-    const parsed = (await orderInput(db, company.id, object(request.body),company.timezone));
-    const year=Number(parsed.businessDate.substring(0,4)),sequence=(await db.prepare("INSERT INTO document_sequences(company_id,kind,year,next_number) VALUES(?,'GOODS_ORDER',?,2) ON CONFLICT(company_id,kind,year) DO UPDATE SET next_number=document_sequences.next_number+1 RETURNING next_number-1 AS number").get(company.id,year)).number;
-    parsed.number=`ТН-${year}-${String(sequence).padStart(4,'0')}`;
-    const id = randomUUID();
-    (await db.prepare("INSERT INTO orders VALUES(?,?,'NEW',?,?)").run(id, company.id, JSON.stringify(parsed), now()));
-    return { id, status: 'NEW', ...parsed };
+    return createGoodsOrder(db,company,object(request.body));
   })));
-  const getOrder = async (companyId, id) => {
-    const row = (await db.prepare('SELECT * FROM orders WHERE company_id=? AND id=?').get(companyId, id));
-    if (!row) fail(404, 'order_not_found');
-    const paid=(await db.prepare('SELECT COALESCE(sum(amount),0) AS paid FROM payments WHERE company_id=? AND order_id=? AND NOT voided').get(companyId,id)).paid;
-    const data=JSON.parse(row.data);
-    return { ...row,data,paid,outstanding:Math.max(0,data.total-paid),customerCredit:Math.max(0,paid-data.total),revision:(await db.prepare("SELECT count(*) AS n FROM entity_history WHERE company_id=? AND kind='order' AND entity_id=?").get(companyId,id)).n };
-  };
+  const getOrder=(companyId,id)=>getGoodsOrder(db,companyId,id);
   app.get('/v1/companies/:companyId/orders', { preHandler: auth }, async request => {
     const company=await access(request,'orders.read'),selected=request.query.projectId;
     if(selected!==undefined&&selected!=='unassigned')await projectReference(db,company.id,selected);
@@ -337,16 +334,7 @@ export async function createApp(options = {}) {
     return {items:await db.prepare('SELECT p.*,w.name AS wallet_name FROM payments p LEFT JOIN wallets w ON w.company_id=p.company_id AND w.id=p.wallet_id WHERE p.company_id=? AND p.order_id=? ORDER BY p.business_date,p.id').all(request.params.companyId,request.params.id)};
   });
   app.post('/v1/companies/:companyId/orders/:id/reserve', { preHandler: auth }, async request => (await command(request, 'orders.fulfill', 'order.reserve', async company => {
-    const order = (await getOrder(company.id, request.params.id));
-    if (order.status !== 'NEW') fail(409, 'invalid_order_state');
-    for (const item of order.data.items) {
-      for (const allocation of (await allocate(db, company.id, item, order.data.scope))) {
-        (await db.prepare('UPDATE batches SET reserved=reserved+? WHERE id=?').run(allocation.quantity, allocation.batchId));
-        (await db.prepare('INSERT INTO reservations VALUES(?,?,?)').run(order.id, allocation.batchId, allocation.quantity));
-      }
-    }
-    (await db.prepare("UPDATE orders SET status='RESERVED' WHERE id=?").run(order.id));
-    return { id: order.id, status: 'RESERVED' };
+    return reserveGoodsOrder(db,company,request.params.id);
   })));
   app.post('/v1/companies/:companyId/orders/:id/cancel', { preHandler: auth }, async request => (await command(request, 'orders.write', 'order.cancel', async company => {
     const order = (await getOrder(company.id, request.params.id));
@@ -362,47 +350,10 @@ export async function createApp(options = {}) {
     return {id:order.id,status:'NEW'};
   }));
   app.post('/v1/companies/:companyId/orders/:id/ship', { preHandler: auth }, async request => (await command(request, 'orders.fulfill', 'order.ship', async company => {
-    const order = (await getOrder(company.id, request.params.id));
-    if (order.status !== 'RESERVED') fail(409, 'invalid_order_state');
-    let cogs = 0;
-    for (const row of (await db.prepare('SELECT r.*,b.unit_cost FROM reservations r JOIN batches b ON b.id=r.batch_id WHERE r.order_id=?').all(order.id))) {
-      await db.prepare('INSERT INTO shipment_allocations VALUES(?,?,?,?)').run(order.id,row.batch_id,row.quantity,row.unit_cost);
-      (await db.prepare('UPDATE batches SET quantity=quantity-?,reserved=reserved-? WHERE id=?').run(row.quantity, row.quantity, row.batch_id));
-      cogs += row.quantity * row.unit_cost;
-    }
-    integer(cogs, 'cogs');
-    (await db.prepare('DELETE FROM reservations WHERE order_id=?').run(order.id));
-    (await db.prepare("UPDATE orders SET status='SHIPPED' WHERE id=?").run(order.id));
-    if(order.data.total){
-      const posted=await postJournal(db,company,{scope:order.data.scope,businessDate:order.data.businessDate,projectId:order.data.projectId,description:`Продажа товаров ${order.id}`,lines:[{account:'receivables',debit:order.data.total},{account:'revenue',credit:order.data.net??order.data.total},...(order.data.vat?[{account:'vat_payable',credit:order.data.vat}]:[])]});
-      await db.prepare('INSERT INTO order_postings VALUES(?,?,?,?)').run(company.id,order.id,posted.id,'REVENUE');
-    }
-    if(cogs){
-      const posted=await postJournal(db,company,{scope:order.data.scope,businessDate:order.data.businessDate,projectId:order.data.projectId,description:`Себестоимость товаров ${order.id}`,lines:[{account:'cogs',debit:cogs},{account:'inventory',credit:cogs}]});
-      await db.prepare('INSERT INTO order_postings VALUES(?,?,?,?)').run(company.id,order.id,posted.id,'COGS');
-    }
-    return { id: order.id, status: 'SHIPPED', revenue: order.data.total, cogs, grossProfit: order.data.total - cogs };
+    return shipGoodsOrder(db,company,request.params.id);
   })));
   app.post('/v1/companies/:companyId/orders/:id/payments', { preHandler: auth }, async request => (await command(request, 'payments.write', 'order.payment', async company => {
-    const order = (await getOrder(company.id, request.params.id));
-    if (order.status !== 'SHIPPED') fail(409, 'invalid_order_state');
-    const amount = integer(object(request.body).amount, 'amount', 1);
-    const paid = (await db.prepare('SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE order_id=? AND NOT voided').get(order.id)).total;
-    if (paid + amount > order.data.total) fail(409, 'overpayment');
-    const body=object(request.body),date=businessDate(body.businessDate,company.timezone);
-    const id=randomUUID();let cashAccount='cash',walletId=null;
-    if(body.walletId!==undefined){
-      await access(request,'wallets.transact');
-      const wallet=await db.prepare('SELECT * FROM wallets WHERE company_id=? AND id=?').get(company.id,text(body.walletId,'walletId'));
-      if(!wallet)fail(404,'wallet_not_found');if(wallet.scope!==order.data.scope)fail(400,'incompatible_ledger_scope');
-      walletId=wallet.id;cashAccount=`wallet:${wallet.id}`;
-    }
-    const posting=await postJournal(db,company,{scope:order.data.scope,projectId:order.data.projectId,businessDate:date,description:`Оплата товаров ${id}`,lines:[{account:cashAccount,debit:amount},{account:'receivables',credit:amount}]});
-    await db.prepare('INSERT INTO payments(id,company_id,order_id,amount,created_at,wallet_id,journal_id,business_date) VALUES(?,?,?,?,?,?,?,?)').run(id,company.id,order.id,amount,now(),walletId,posting.id,date);
-    if(walletId)await db.prepare('INSERT INTO wallet_entries(id,company_id,wallet_id,amount,kind,reference_id,created_at,journal_id) VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(),company.id,walletId,amount,'ORDER_PAYMENT',id,now(),posting.id);
-    await projectOrderPayments(db,company,order);
-    if (paid + amount === order.data.total) (await db.prepare("UPDATE orders SET status='CLOSED' WHERE id=?").run(order.id));
-    return { id, orderId: order.id, amount, outstanding: order.data.total - paid - amount };
+    return receiveGoodsPayment(db,company,request.params.id,object(request.body),()=>access(request,'wallets.transact'));
   })));
   const getGoodsPayment=async(companyId,orderId,paymentId)=>{
     const payment=await db.prepare('SELECT * FROM payments WHERE company_id=? AND order_id=? AND id=?').get(companyId,orderId,paymentId);
@@ -523,6 +474,7 @@ export async function createApp(options = {}) {
   registerAssetRoutes(app,{db,auth,access,command,pageLimit,object});
   const commercial=registerCommercialRoutes(app, { db, auth, access, command, pageLimit, object });
   registerBankRoutes(app, { db, auth, access, command, pageLimit, object, ...commercial });
+  await registerRetail(app,{db,auth,access,command,object});
   await registerCompanySetup(app,{db,auth,access});
   registerBusinessRoutes(app, { db, auth, access, command, pageLimit, object, audit });
   if (options.webRoot) await app.register(staticFiles, {root:resolve(options.webRoot),dotfiles:'deny',index:'index.html',cacheControl:true,maxAge:0});

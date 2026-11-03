@@ -71,7 +71,7 @@ try{
  await mp.setViewportSize({width:390,height:667});await mp.locator('#menu').click();
  const footer=await mp.locator('.side-bottom').boundingBox();assert.ok(footer.y+footer.height<=667,'mobile sidebar bottom actions are clipped');
  await mp.locator('#integrations-toggle').click();const integration=await mp.locator('[data-view=kaspi]').boundingBox();assert.ok(integration.y+integration.height<=667,'expanded integration menu is clipped');
- await mp.screenshot({path:screenshots+'/13-short-menu.png'});await mp.locator('.side [data-view=home]').click();await mp.frameLocator('#accounting-frame').locator('flutter-view').waitFor();await mp.screenshot({path:screenshots+'/14-short-workspace.png'});
+ await mp.screenshot({path:screenshots+'/13-short-menu.png'});await mp.locator('#accounting-toggle').click();await mp.locator('.side [data-view=home]').click();await mp.frameLocator('#accounting-frame').locator('flutter-view').waitFor();await mp.screenshot({path:screenshots+'/14-short-workspace.png'});
  await mp.setViewportSize({width:390,height:844});
  await mp.locator('#menu').click();await mp.locator('.side [data-view=setup]').click();await mp.locator('#setup-form').waitFor();assert.ok(await mp.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'setup wizard mobile horizontal overflow');await mp.screenshot({path:screenshots+'/16-setup-mobile.png',fullPage:true});await mp.locator('#setup-pause').click();await mp.locator('#accounting-frame').waitFor();
  await mp.locator('#menu').click();await mp.locator('#logout').click();await mp.locator('#auth').waitFor({state:'visible'});

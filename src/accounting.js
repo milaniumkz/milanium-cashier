@@ -1,9 +1,11 @@
+import { registerRetailDeviceGateway } from './retail-device.js';
 import { request } from 'undici';
 import { readFile,stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from './db.js';
 
 export function registerAccounting(app,{config,member}){
+ registerRetailDeviceGateway(app,{config,member});
  const base=config.accountingUrl;
  const sessions=new Map();
  async function identity(req){

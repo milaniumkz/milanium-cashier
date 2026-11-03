@@ -18,7 +18,7 @@ import { Outbox, validateWebhookUrl } from './webhooks.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 export async function buildApp(config, options = {}) {
-  const app = Fastify({ logger: options.logger ?? { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'], serializers: { req: req => ({ method: req.method, url: req.url.replace(/(\/public\/payments\/|\/sandbox\/payments\/|\/sandbox\/pay\/|\/p\/)[^/?]+/g, '$1[redacted]') }) } }, bodyLimit: 32768, trustProxy: false });
+  const app = Fastify({ logger: options.logger ?? { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'], serializers: { req: req => ({ method: req.method, url: req.url.split('?')[0].replace(/(\/public\/payments\/|\/sandbox\/payments\/|\/sandbox\/pay\/|\/p\/)[^/?]+/g, '$1[redacted]') }) } }, bodyLimit: 32768, trustProxy: false });
   const store = options.store || new Store(config);
   const driver = options.driver || (config.mode === 'sandbox' ? new SandboxDriver(config, store) : config.mode === 'kaspi' ? new KaspiDriver(config, store) : new AndroidDriver(config, store));
   const worker = new Worker(store, driver, config), outbox = new Outbox(store, config);
@@ -26,8 +26,9 @@ export async function buildApp(config, options = {}) {
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
   app.addHook('onRequest', async (req, reply) => {
+    reply.header('Permissions-Policy','camera=(self), microphone=()');
     reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer').header('X-Frame-Options', 'DENY');
-    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     reply.header('Cache-Control', 'no-store');
     if (config.production) reply.header('Strict-Transport-Security', 'max-age=31536000');
     if (['POST','PATCH','PUT','DELETE'].includes(req.method) && req.headers.origin && req.headers.origin !== config.baseUrl) throw new AppError('ORIGIN_REJECTED', 'Недопустимый источник запроса.', 403);
@@ -213,14 +214,17 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'accounting-frame.js', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'accounting-frame.js', 'retail.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
   });
+  app.get('/assets/zxing.min.js',(_,reply)=>serve('vendor/zxing/index.min.js',reply));
+  app.get('/store-count',(_,reply)=>serve('store-count.html',reply));
   app.get('/favicon.ico', (_,reply)=>reply.code(204).send());
   app.get('/', (_, reply) => serve('business.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
+  app.get('/help/store',(_,reply)=>serve('store-guide.html',reply));
   app.get('/help/kaspi-cashier', (_, reply) => serve('cashier-guide.html', reply));
   app.get('/docs', (_, reply) => serve('docs.html', reply));
   app.get('/p/:token', (_, reply) => serve('checkout.html', reply));

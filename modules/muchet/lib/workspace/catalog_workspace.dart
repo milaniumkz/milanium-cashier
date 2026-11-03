@@ -383,6 +383,7 @@ class _ResourceEditorState extends State<_ResourceEditor> {
               field('iban', 'Банковский счёт IBAN'),
               field('bic', 'БИК банка'),
             ],
+            if (widget.kind == 'nomenklatura') field('barcode', 'Штрихкод'),
             if (['services', 'nomenklatura'].contains(widget.kind)) ...[
               field('unit', 'Единица измерения'),
               TextFormField(
