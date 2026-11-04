@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {buildApp} from '../src/app.js';
-import {createApp} from '../modules/muchet/server/src/app.js';
+
 import {AICommerce} from '../src/ai-commerce.js';
 test('AI commerce uses real PostgreSQL catalog, VAT, reservation and idempotent native order',async t=>{
  if(!process.env.DATABASE_URL){t.skip('Needs isolated PostgreSQL');return;}
+ const {createApp}=await import('../modules/muchet/server/src/app.js');
  const schema='test_'+randomUUID().replaceAll('-',''),dataDir=await mkdtemp('/tmp/mbusiness-ai-commerce-');process.env.MBUSINESS_BRIDGE_SECRET=randomBytes(32).toString('hex');const accounting=await createApp({schema,dataDir:dataDir+'/accounting',fiscalWorker:false}),accountingUrl=await accounting.listen({host:'127.0.0.1',port:0});const config={mode:'sandbox',production:false,key:randomBytes(32),adminPassword:randomBytes(24).toString('hex'),baseUrl:'http://127.0.0.1:3080',dataDir,pollMs:1000,webhookOrigins:[],accountingUrl,accountingBridgeSecret:process.env.MBUSINESS_BRIDGE_SECRET};const app=await buildApp(config,{logger:false,background:false});
  t.after(async()=>{await app.close();await accounting.db.exec(`DROP SCHEMA "${schema}" CASCADE`);await accounting.close();await rm(dataDir,{recursive:true,force:true});delete process.env.MBUSINESS_BRIDGE_SECRET;});
  const registration=await app.inject({method:'POST',url:'/auth/register',payload:{login:'ai.real.commerce',password:'Synthetic-test-password-123',company:'Synthetic AI Commerce'}});assert.equal(registration.statusCode,201,registration.body);const cookie=registration.headers['set-cookie'].split(';')[0],overview=(await app.inject({url:'/account/overview',headers:{cookie}})).json(),mid=overview.company.id;

@@ -1,8 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {randomUUID,randomBytes} from 'node:crypto';import {mkdtemp,rm} from 'node:fs/promises';
-import {buildApp} from '../src/app.js';import {createApp} from '../modules/muchet/server/src/app.js';
+import {buildApp} from '../src/app.js';
 const password='Synthetic-staff-password-2026';
 test('Team shares a company without owner privileges; role changes and disabling revoke both sessions',async t=>{
  if(!process.env.DATABASE_URL){t.skip('Needs isolated PostgreSQL');return;}
+ const {createApp}=await import('../modules/muchet/server/src/app.js');
  const schema='test_'+randomUUID().replaceAll('-',''),dataDir=await mkdtemp('/tmp/mbusiness-team-');process.env.MBUSINESS_BRIDGE_SECRET=randomBytes(32).toString('hex');const accounting=await createApp({schema,dataDir:dataDir+'/accounting',fiscalWorker:false}),accountingUrl=await accounting.listen({host:'127.0.0.1',port:0});const config={mode:'sandbox',production:false,key:randomBytes(32),adminPassword:randomBytes(24).toString('hex'),baseUrl:'http://127.0.0.1:3080',dataDir,pollMs:1000,webhookOrigins:[],accountingUrl,accountingBridgeSecret:process.env.MBUSINESS_BRIDGE_SECRET};const app=await buildApp(config,{logger:false,background:false});
  t.after(async()=>{await app.close();await accounting.db.exec(`DROP SCHEMA "${schema}" CASCADE`);await accounting.close();await rm(dataDir,{recursive:true,force:true});delete process.env.MBUSINESS_BRIDGE_SECRET;});
  const call=(method,url,payload,cookie)=>app.inject({method,url,...(payload?{payload}:{}),headers:{...(cookie?{cookie}:{}),...(method!=='GET'?{'idempotency-key':randomUUID()}:{})},remoteAddress:'93.184.216.34'});const register=async login=>{const r=await call('POST','/auth/register',{login,password,company:'Synthetic '+login});assert.equal(r.statusCode,201,r.body);return r.headers['set-cookie'].split(';')[0];};

@@ -214,7 +214,7 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'ai.js', 'privacy.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'ai.js', 'privacy.js', 'social-callback.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
@@ -225,6 +225,8 @@ export async function buildApp(config, options = {}) {
   app.get('/', (_, reply) => serve('business.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
   app.get('/downloads/terminal-agent.mjs',async(_,reply)=>reply.header('Content-Disposition','attachment; filename=mbusiness-terminal-agent.mjs').type('text/javascript; charset=utf-8').send(await readFile(path.join(directory,'../public/terminal-agent.mjs'))));
+  app.get('/social/instagram/callback',(_,reply)=>serve('social-callback.html',reply));
+  app.get('/social/publishing/:network/callback',(_,reply)=>serve('social-callback.html',reply));
   app.get('/privacy',(_,reply)=>serve('privacy.html',reply));
   app.get('/data-deletion',(_,reply)=>serve('privacy.html',reply));
   app.get('/help/social',(_,reply)=>serve('social-guide.html',reply));
