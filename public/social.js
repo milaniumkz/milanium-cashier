@@ -6,7 +6,7 @@ const date=n=>n?new Date(n).toLocaleString('ru-RU'):'—';
 let abort,timer,live=0;
 export function stopSocial(){live++;abort?.abort();clearInterval(timer);}
 export async function mountSocial({container,view,toast,user}){
- stopSocial();abort=new AbortController();const version=live;
+ stopSocial();abort=new AbortController();const version=live;container.innerHTML='<section class="card" role="status">Загружаем каналы и CRM…</section>';
  async function api(url,method='GET',body,key){const r=await fetch(url,{method,credentials:'same-origin',signal:abort.signal,headers:{'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await r.json();if(!r.ok)throw new Error(data.error?.message||'Запрос не выполнен.');return data;}
  const active=()=>version===live;
  const heading=(title,note)=>`<div class="page-head"><div><span class="eyebrow">ОБЩЕНИЕ И ПРОДАЖИ</span><h1>${title}</h1><p class="muted">${note}</p></div><a class="secondary" href="/help/social" target="_blank" rel="noopener">Как подключить →</a></div>`;

@@ -3,7 +3,7 @@ const names={vk:'ВКонтакте',ok:'Одноклассники'},states={sc
 let abort,generation=0;
 export function stopPublishing(){generation++;abort?.abort();}
 export async function mountPublishing({container,toast}){
- stopPublishing();abort=new AbortController();const revision=generation;
+ stopPublishing();abort=new AbortController();const revision=generation;container.innerHTML='<section class="card" role="status">Загружаем публикации…</section>';
  async function api(url,method='GET',body,key){const r=await fetch(url,{method,credentials:'same-origin',signal:abort.signal,headers:{'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});const d=await r.json();if(!r.ok)throw new Error(d.error?.message||'Запрос не выполнен.');return d;}
  function action(el,fn){el?.addEventListener('click',async()=>{el.disabled=true;try{await fn();}catch(e){if(e.name!=='AbortError')toast(e.message);}finally{el.disabled=false;}});}
  function form(el,fn){el?.addEventListener('submit',async e=>{e.preventDefault();const b=el.querySelector('[type=submit]'),error=el.querySelector('.error');b.disabled=true;error.textContent='';try{await fn(el);}catch(e){if(e.name!=='AbortError')error.textContent=e.message;}finally{b.disabled=false;}});}

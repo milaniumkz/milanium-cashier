@@ -92,6 +92,7 @@ jobs:
           CHROMIUM_PATH: /usr/bin/google-chrome
           SCREENSHOTS_DIR: /tmp/mbusiness-social-screens
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: mbusiness-social-screens
           path: /tmp/mbusiness-social-screens/

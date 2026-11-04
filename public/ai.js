@@ -3,7 +3,7 @@ const money=n=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:6}).format((
 let abort,timer,generation=0;
 export function stopAI(){generation++;abort?.abort();clearInterval(timer);}
 export async function mountAI({container,toast,company}){
- stopAI();abort=new AbortController();const revision=generation;
+ stopAI();abort=new AbortController();const revision=generation;container.innerHTML='<section class="card" role="status">Загружаем настройки AI…</section>';
  async function api(url,method='GET',body,key){const r=await fetch(url,{method,credentials:'same-origin',signal:abort.signal,headers:{'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});const d=await r.json();if(!r.ok)throw new Error(d.error?.message||'Запрос не выполнен.');return d;}
  function form(el,fn){el?.addEventListener('submit',async e=>{e.preventDefault();const b=el.querySelector('[type=submit]'),err=el.querySelector('.error');b.disabled=true;err.textContent='';try{await fn(el);}catch(e){if(e.name!=='AbortError')err.textContent=e.message;}finally{b.disabled=false;}});}
  try{const [data,social]=await Promise.all([api('/account/ai'),api('/account/social')]);let warehouses=[],warehouseError='';if(data.can_configure){try{warehouses=(await api(`/accounting-api/v1/companies/${company.id}/retail/context`)).warehouses;}catch{warehouseError='Склады учёта пока недоступны. Без склада AI может отвечать по вашим правилам; подбор и оформление товаров требуют настройки учёта.';}}if(revision!==generation)return;
