@@ -4,10 +4,12 @@ import {AppError,now} from './db.js';
 import {hash,token,seal,unseal} from './crypto.js';
 import {teamRole} from './team-roles.js';
 import {PublishingProvider} from './publishing-provider.js';
+import {registerPublishingWeb} from './publishing-web.js';
 const networkSchema=z.enum(['vk','ok']),numeric=z.string().regex(/^\d{1,40}$/);
 const campaignSchema=z.object({title:z.string().trim().min(1).max(150),body:z.string().trim().min(1).max(4000),group_ids:z.array(z.uuid()).min(1).max(10),media_id:z.uuid().nullable().default(null),schedule:z.array(z.number().int()).min(1).max(30),timezone:z.string().max(80),confirmed_rights:z.literal(true)}).strict();
 export function publicationWarnings(text){const warnings=[];if((text.match(/https?:\/\//g)||[]).length>2)warnings.push('Сократите количество ссылок: рекомендуется одна понятная ссылка.');const letters=text.replace(/[^\p{L}]/gu,'');if(letters.length>15&&letters===letters.toUpperCase())warnings.push('Не используйте текст целиком заглавными буквами.');if(/([!?])\1{2,}/.test(text))warnings.push('Избегайте повторов восклицательных и вопросительных знаков.');if(/(гарантированн\w* доход|без риска|срочно переведите)/iu.test(text))warnings.push('Проверьте обещания и финансовые утверждения: не вводите читателя в заблуждение.');return warnings;}
 export function registerPublishing(app,{store,config,member,admin,provider=new PublishingProvider(),background=true}){
+ registerPublishingWeb(app,{store,member,config});
  const db=store.db;
  db.exec(`CREATE TABLE IF NOT EXISTS publishing_platform(network TEXT PRIMARY KEY,app_id TEXT NOT NULL,secret TEXT NOT NULL,public_key TEXT NOT NULL DEFAULT '',version TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS publishing_oauth(hash TEXT PRIMARY KEY,merchant_id TEXT NOT NULL REFERENCES merchants(id),actor_id TEXT NOT NULL,cookie_hash TEXT NOT NULL,network TEXT NOT NULL,expires_at INTEGER NOT NULL);

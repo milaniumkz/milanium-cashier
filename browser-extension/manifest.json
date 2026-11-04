@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "MBusiness — публикации VK и OK",
+  "version": "1.0.0",
+  "description": "Публикации в своих группах через ваш авторизованный браузер. Пароли и cookie не передаются в MBusiness.",
+  "permissions": ["storage", "alarms", "scripting"],
+  "host_permissions": ["https://mbusiness.89.126.192.185.sslip.io/*", "https://vk.com/*", "https://www.vk.com/*", "https://m.vk.com/*", "https://vk.ru/*", "https://www.vk.ru/*", "https://m.vk.ru/*", "https://ok.ru/*", "https://www.ok.ru/*", "https://m.ok.ru/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_popup": "popup.html", "default_title": "MBusiness"},
+  "minimum_chrome_version": "120"
+}

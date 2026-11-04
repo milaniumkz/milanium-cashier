@@ -31,7 +31,7 @@ export async function buildApp(config, options = {}) {
     reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     reply.header('Cache-Control', 'no-store');
     if (config.production) reply.header('Strict-Transport-Security', 'max-age=31536000');
-    if (['POST','PATCH','PUT','DELETE'].includes(req.method) && req.headers.origin && req.headers.origin !== config.baseUrl) throw new AppError('ORIGIN_REJECTED', 'Недопустимый источник запроса.', 403);
+    if (['POST','PATCH','PUT','DELETE'].includes(req.method) && req.headers.origin && req.headers.origin !== config.baseUrl && !(req.routeOptions.url?.startsWith('/browser-publisher/') && /^chrome-extension:\/\/[a-p]{32}$/.test(req.headers.origin))) throw new AppError('ORIGIN_REJECTED', 'Недопустимый источник запроса.', 403);
   });
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: 'Проверьте поля запроса.', fields: err.issues.map(v => ({ path: v.path.join('.'), message: v.message })) } });
@@ -214,7 +214,7 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'ai.js', 'privacy.js', 'social-callback.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'publishing-web.js', 'browser-publisher.js', 'ai.js', 'privacy.js', 'social-callback.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
@@ -224,6 +224,8 @@ export async function buildApp(config, options = {}) {
   app.get('/favicon.ico', (_,reply)=>reply.code(204).send());
   app.get('/', (_, reply) => serve('business.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
+  app.get('/downloads/mbusiness-browser-extension.zip',async(_,reply)=>reply.header('Content-Disposition','attachment; filename=mbusiness-browser-extension.zip').type('application/zip').send(await readFile(path.join(directory,'../public/mbusiness-browser-extension.zip'))));
+  app.get('/help/browser-publisher',(_,reply)=>serve('browser-publisher-guide.html',reply));
   app.get('/downloads/terminal-agent.mjs',async(_,reply)=>reply.header('Content-Disposition','attachment; filename=mbusiness-terminal-agent.mjs').type('text/javascript; charset=utf-8').send(await readFile(path.join(directory,'../public/terminal-agent.mjs'))));
   app.get('/social/instagram/callback',(_,reply)=>serve('social-callback.html',reply));
   app.get('/social/publishing/:network/callback',(_,reply)=>serve('social-callback.html',reply));
