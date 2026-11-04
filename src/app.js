@@ -68,7 +68,7 @@ export async function buildApp(config, options = {}) {
     }
     return store.createInvoice(merchant, v, idem);
   };
-  const business=registerBusiness(app,{store,config,driver,worker,create,admin});
+  const business=registerBusiness(app,{store,config,driver,worker,create,admin,socialProvider:options.socialProvider,socialTelegram:options.socialTelegram,publishingProvider:options.publishingProvider,aiClient:options.aiClient,aiCommerce:options.aiCommerce,background:options.background!==false});
   app.get('/healthz', async () => ({ ok: true }));
   app.post('/admin/login', { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { password } = z.object({ password: z.string().max(300) }).strict().parse(req.body);
@@ -214,7 +214,7 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'ai.js', 'privacy.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
@@ -225,6 +225,11 @@ export async function buildApp(config, options = {}) {
   app.get('/', (_, reply) => serve('business.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
   app.get('/downloads/terminal-agent.mjs',async(_,reply)=>reply.header('Content-Disposition','attachment; filename=mbusiness-terminal-agent.mjs').type('text/javascript; charset=utf-8').send(await readFile(path.join(directory,'../public/terminal-agent.mjs'))));
+  app.get('/privacy',(_,reply)=>serve('privacy.html',reply));
+  app.get('/data-deletion',(_,reply)=>serve('privacy.html',reply));
+  app.get('/help/social',(_,reply)=>serve('social-guide.html',reply));
+  app.get('/social/whatsapp/connect',(_,reply)=>{reply.header('Content-Security-Policy',"default-src 'self'; script-src 'self' https://connect.facebook.net; style-src 'self'; img-src 'self' data: https://*.facebook.com; connect-src 'self' https://*.facebook.com https://*.facebook.net; frame-src https://*.facebook.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");return serve('social-connect.html',reply);});
+  app.get('/operator/social',(_,reply)=>serve('social-platform.html',reply));
   app.get('/help/fiscal',(_,reply)=>serve('fiscal-guide.html',reply));
   app.get('/help/terminals',(_,reply)=>serve('terminal-guide.html',reply));
   app.get('/help/store',(_,reply)=>serve('store-guide.html',reply));
@@ -233,7 +238,7 @@ export async function buildApp(config, options = {}) {
   app.get('/p/:token', (_, reply) => serve('checkout.html', reply));
   if (config.mode === 'sandbox') app.get('/sandbox/pay/:token', (_, reply) => serve('sandbox.html', reply));
   app.decorate('services', { store, driver, worker, outbox, business });
-  app.addHook('onClose', async () => { await worker.stop(); await outbox.stop(); if (!options.store) store.close(); });
+  app.addHook('onClose', async () => { await app.aiService?.close();await app.publishingService?.close();await app.socialService?.close();await app.teamAccess?.close();await worker.stop(); await outbox.stop(); if (!options.store) store.close(); });
   if (options.background !== false) { store.recover(); worker.start(); outbox.start(); }
   return app;
 }

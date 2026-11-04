@@ -11,16 +11,16 @@ export function registerAccounting(app,{config,member}){
  const base=config.accountingUrl;
  const sessions=new Map();
  async function identity(req){
-  const id=req.member.id;let entry=sessions.get(id);
+  const id=req.member.id,revision=req.member.role+':'+req.member.version;let entry=sessions.get(id);if(entry&&entry.revision!==revision){sessions.delete(id);entry=null;}
   if(entry&&entry.expiresAt>Date.now()+15000)return entry;
   const promise=entry?.promise|| (async()=>{
-   const response=await request(new URL('/internal/mbusiness/session',base),{method:'POST',headers:{'content-type':'application/json','x-mbusiness-bridge-key':config.accountingBridgeSecret},body:JSON.stringify({userId:id,companyId:req.company.id,login:req.member.login,companyName:req.company.name}),headersTimeout:10000,bodyTimeout:10000});
+   const response=await request(new URL('/internal/mbusiness/session',base),{method:'POST',headers:{'content-type':'application/json','x-mbusiness-bridge-key':config.accountingBridgeSecret},body:JSON.stringify({userId:id,companyId:req.company.id,login:req.member.login,companyName:req.company.name,ownerId:req.member.owner_id||id,ownerLogin:req.member.owner_login||req.member.login,role:req.member.role||'owner',revision:req.member.version||1}),headersTimeout:10000,bodyTimeout:10000});
    if(response.statusCode!==200){await response.body.dump();throw new AppError('ACCOUNTING_AUTH_FAILED','Не удалось подключить учётный модуль.',503);}
    const value=await response.body.json();if(value.companyId!==req.company.id||!/^[A-Za-z0-9_-]{43}$/.test(value.token||''))throw new Error('Invalid accounting bridge');
    if(sessions.size>=10000)for(const [key,cached] of sessions)if(!cached.promise&&cached.expiresAt<Date.now())sessions.delete(key);
-   sessions.set(id,value);return value;
+   value.revision=revision;sessions.set(id,value);return value;
   })();
-  sessions.set(id,{promise});try{return await promise;}catch(e){sessions.delete(id);throw e;}
+  sessions.set(id,{promise,revision});try{return await promise;}catch(e){sessions.delete(id);throw e;}
  }
  app.get('/account/accounting-status',{preHandler:member},async()=>({available:!!base&&!!config.accountingBridgeSecret}));
  const proxy=async(req,reply)=>{
@@ -33,7 +33,7 @@ export function registerAccounting(app,{config,member}){
   if(destination.origin!==new URL(base).origin||!decoded.startsWith('/v1/')||decoded.includes('..')||decoded.includes('\\'))throw new AppError('NOT_FOUND','Маршрут не найден.',404);
   if(decoded.startsWith('/v1/auth/')&&decoded!=='/v1/auth/me')throw new AppError('MANAGED_ACCOUNT','Управляйте аккаунтом в настройках MBusiness.',409);
   if(decoded==='/v1/companies'&&req.method!=='GET')throw new AppError('MANAGED_ACCOUNT','Компании создаются при регистрации MBusiness.',409);
-  if(decoded.includes('/invitations')&&req.method==='POST')throw new AppError('MANAGED_ACCOUNT','Приглашения сотрудников появятся после подключения общего управления доступом MBusiness.',409);
+  if((decoded.includes('/invitations')||decoded.includes('/members'))&&req.method!=='GET')throw new AppError('MANAGED_ACCOUNT','Управляйте сотрудниками в разделе команды MBusiness.',409);
   const session=await identity(req);
   const headers={authorization:'Bearer '+session.token};
   if(req.headers['idempotency-key'])headers['idempotency-key']=req.headers['idempotency-key'];
@@ -58,4 +58,6 @@ export function registerAccounting(app,{config,member}){
   const types={'.js':'text/javascript','.json':'application/json','.wasm':'application/wasm','.ttf':'font/ttf','.otf':'font/otf','.png':'image/png','.svg':'image/svg+xml','.bin':'application/octet-stream'};
   try{const size=(await stat(resolved)).size;if(size>50*1024*1024)throw new Error('size');reply.header('X-Frame-Options','SAMEORIGIN');return reply.type(types[path.extname(resolved)]||'application/octet-stream').send(await readFile(resolved));}catch{throw new AppError('NOT_FOUND','Файл не найден.',404);}
  });
+ return {async revokeActor(userId,companyId,revision){sessions.delete(userId);if(!base||!config.accountingBridgeSecret)return false;const response=await request(new URL('/internal/mbusiness/staff/revoke',base),{method:'POST',headers:{'content-type':'application/json','x-mbusiness-bridge-key':config.accountingBridgeSecret},body:JSON.stringify({userId,companyId,revision}),headersTimeout:5000,bodyTimeout:5000});await response.body.dump();return response.statusCode===200;}};
+
 }

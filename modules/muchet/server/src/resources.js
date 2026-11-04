@@ -9,6 +9,7 @@ export const resourceGroups = {
 };
 export const kinds = Object.fromEntries(Object.entries(resourceGroups).flatMap(([group, list]) => list.map(kind => [kind, group])));
 export const permissions = [
+  'marketing.read','marketing.write','crm.read','crm.write','messages.read','messages.send','ai.use','automation.manage',
   ...Object.keys(resourceGroups).flatMap(group => [`${group}.read`, `${group}.write`]),
   'inventory.count','inventory.read','inventory.receive','inventory.move','inventory.writeoff','orders.read','orders.write','orders.fulfill',
   'accounting.read','accounting.post','payments.write','files.read','files.write','audit.read',

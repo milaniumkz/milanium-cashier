@@ -19,7 +19,8 @@
     "init:kaspi": "node scripts/init-kaspi.mjs",
     "start:kaspi": "node --env-file=.env.kaspi src/server.js",
     "test:browser": "node test/business-browser.mjs",
-    "test:retail": "node test/retail-browser.mjs"
+    "test:retail": "node test/retail-browser.mjs",
+    "test:social": "node test/social-browser.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

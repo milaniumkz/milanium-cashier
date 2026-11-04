@@ -12,6 +12,10 @@ on:
         description: Dedicated public HTTPS origin for deploy; leave empty for inspect/prepare.
         type: string
         required: false
+      operator_profile_public:
+        description: Optional JSON with public legal_name, address and support_email only. Never put passwords, tokens or personal identifiers here.
+        type: string
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -46,6 +50,10 @@ jobs:
         working-directory: modules/muchet/server
         env:
           DATABASE_URL: postgresql://mbusiness_test:synthetic-actions-test-only@127.0.0.1:5432/mbusiness_test
+      - name: Verify staff revocation and real accounting checkout
+        run: node --test --test-concurrency=1 test/team.test.js test/ai-commerce.test.js
+        env:
+          DATABASE_URL: postgresql://mbusiness_test:synthetic-actions-test-only@127.0.0.1:5432/mbusiness_test
       - name: Validate deployment shell
         run: for script in ops/github-*.sh; do bash -n "$script"; done
   accounting-ui:
@@ -69,8 +77,27 @@ jobs:
           path: modules/muchet/build/web/
           include-hidden-files: true
           retention-days: 7
+  social-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run test:social
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
+          SCREENSHOTS_DIR: /tmp/mbusiness-social-screens
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mbusiness-social-screens
+          path: /tmp/mbusiness-social-screens/
+          retention-days: 7
   deploy:
-    needs: [validate, accounting-ui]
+    needs: [validate, accounting-ui, social-ui]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: mbusiness-production
@@ -92,6 +119,8 @@ jobs:
       - name: Verify SSH host identity and run isolated operation
         env:
           SSHPASS: ${{ secrets.MBUSINESS_SSH_PASSWORD }}
+          OPERATOR_PROFILE_BASE64: ${{ secrets.MBUSINESS_OPERATOR_PROFILE_BASE64 }}
+          OPERATOR_PROFILE_PUBLIC: ${{ inputs.operator_profile_public }}
         shell: bash
         run: |
           set -euo pipefail
@@ -105,6 +134,23 @@ jobs:
           options=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" -o ConnectTimeout=15 -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1)
           remote_dir="/root/mbusiness-upload-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           sshpass -e ssh -p "$SSH_PORT" "${options[@]}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir '$remote_dir'"
+          if [[ "$OPERATION" == deploy && -n "${OPERATOR_PROFILE_PUBLIC:-}" ]]; then
+            OPERATOR_PROFILE_BASE64=$(python3 - <<'PYPROFILE'
+          import os,json,base64
+          p=json.loads(os.environ['OPERATOR_PROFILE_PUBLIC'])
+          assert set(p)=={'legal_name','address','support_email'}
+          assert all(isinstance(v,str) and 1<=len(v)<=500 for v in p.values())
+          print(base64.b64encode(json.dumps(p,ensure_ascii=False).encode()).decode())
+          PYPROFILE
+            )
+          fi
+          if [[ "$OPERATION" == deploy && -n "${OPERATOR_PROFILE_BASE64:-}" ]]; then
+            umask 077
+            profile_file="$RUNNER_TEMP/mbusiness-operator-profile.base64"
+            printf '%s' "$OPERATOR_PROFILE_BASE64" > "$profile_file"
+            sshpass -e scp -P "$SSH_PORT" "${options[@]}" "$profile_file" "$SSH_USER@$SSH_HOST:$remote_dir/operator-profile.base64"
+            rm -f "$profile_file"
+          fi
           remote_script="$remote_dir/bootstrap.sh"
           sshpass -e scp -P "$SSH_PORT" "${options[@]}" ops/github-deploy.sh "$SSH_USER@$SSH_HOST:$remote_script"
           if [[ "$OPERATION" == inspect ]]; then

@@ -1,0 +1,3 @@
+const target=document.querySelector('#operator-contact');
+try{const r=await fetch('/legal/operator',{credentials:'omit'}),p=await r.json();if(!r.ok)throw new Error(p.error?.message||'Контакты оператора ещё не настроены.');const name=document.createElement('strong');name.textContent=p.legal_name;const address=document.createElement('p');address.textContent=p.address;const link=document.createElement('a');link.href='mailto:'+p.support_email;link.textContent=p.support_email;target.replaceChildren(name,document.createElement('br'),document.createTextNode(p.address),document.createElement('br'),link);}catch(e){target.textContent=e.message;}
+if(location.pathname==='/data-deletion')document.querySelector('#deletion').scrollIntoView();

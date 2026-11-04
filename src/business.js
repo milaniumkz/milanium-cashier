@@ -1,3 +1,9 @@
+import {createTeam} from './team.js';
+import {ServiceWallet} from './service-wallet.js';
+import {registerSocial} from './social.js';
+import {registerPublishing} from './publishing.js';
+import {registerAI} from './ai.js';
+import {registerOperatorProfile} from './operator-profile.js';
 import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -81,19 +87,25 @@ export class Business {
  });}
 }
 
-export function registerBusiness(app,{store,config,driver,worker,create,admin}){
+export function registerBusiness(app,{store,config,driver,worker,create,admin,socialProvider,socialTelegram,publishingProvider,aiClient,aiCommerce,background}){
+ registerOperatorProfile(app,{store,config,admin});
  const business=new Business(store);
+ const serviceWallet=new ServiceWallet(store);store.serviceWallet=serviceWallet;app.decorate('serviceWallet',serviceWallet);
  const cookieOptions={httpOnly:true,secure:config.production,sameSite:'strict',path:'/',maxAge:12*3600};
  async function issue(user,reply){const value=token();store.db.prepare('DELETE FROM business_sessions WHERE expires_at<?').run(now());store.db.prepare('INSERT INTO business_sessions VALUES(?,?,?)').run(hash(value),user.id,now()+12*3600000);reply.setCookie('mb_session',value,cookieOptions);}
- const member=async req=>{const u=store.db.prepare('SELECT u.id,u.login,u.merchant_id FROM business_sessions s JOIN business_users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>?').get(hash(req.cookies.mb_session||''),now());if(!u)throw new AppError('UNAUTHORIZED','Войдите в MBusiness.',401);req.member=u;req.company=store.merchant(u.merchant_id);};
- registerAccounting(app,{config,member});
+ const team=createTeam({store,config,passwordHash,passwordMatches,dummyHash,cookieOptions});app.decorate('teamAccess',team);
+ const member=async req=>{let u=store.db.prepare('SELECT u.id,u.login,u.merchant_id FROM business_sessions s JOIN business_users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>?').get(hash(req.cookies.mb_session||''),now());if(u)u={...u,is_owner:true,role:'owner',version:1,permissions:['*'],owner_id:u.id,owner_login:u.login};else u=team.member(req.cookies.mb_session);if(!u)throw new AppError('UNAUTHORIZED','Войдите в MBusiness.',401);req.member=u;req.company=store.merchant(u.merchant_id);if(!req.company)throw new AppError('UNAUTHORIZED','Компания недоступна.',401);if(!u.is_owner)team.rootAccess(req,u);};
+ registerPublishing(app,{store,config,member,admin,provider:publishingProvider,background});
+ registerSocial(app,{store,config,member,admin,provider:socialProvider,telegram:socialTelegram,background});
+ registerAI(app,{store,config,member,admin,createInvoice:create,client:aiClient,commerce:aiCommerce,background});
+ const accounting=registerAccounting(app,{config,member});team.register(app,member,accounting.revokeActor);
  registerTariffPayments(app,{store,business,config,driver,worker,member,admin,getPlans:id=>[...plans,...(business.offer(id)?[business.offer(id)]:[])]});
  const limits={config:{rateLimit:{max:8,timeWindow:'1 minute'}}};
  app.post('/auth/register',limits,async(req,reply)=>{
   const v=z.object({login:loginSchema,password:passwordSchema,company:z.string().trim().min(2).max(100)}).strict().parse(req.body);
   const password=await passwordHash(v.password);
   const result=store.transaction(()=>{
-   if(store.db.prepare('SELECT id FROM business_users WHERE login=?').get(v.login))throw new AppError('LOGIN_UNAVAILABLE','Этот логин недоступен.',409);
+   if(team.loginUnavailable(v.login)||store.db.prepare('SELECT id FROM business_users WHERE login=?').get(v.login))throw new AppError('LOGIN_UNAVAILABLE','Этот логин недоступен.',409);
    const created=store.createMerchant({name:v.company,account_label:v.company,webhook_url:''});const id=randomUUID();
    store.db.prepare('INSERT INTO business_users VALUES(?,?,?,?,?)').run(id,created.merchant.id,v.login,password,now());
    store.db.prepare('INSERT INTO business_wallets(merchant_id) VALUES(?)').run(created.merchant.id);return {id,...created};
@@ -102,24 +114,26 @@ export function registerBusiness(app,{store,config,driver,worker,create,admin}){
  app.post('/auth/login',limits,async(req,reply)=>{
   const v=z.object({login:loginSchema,password:z.string().min(1).max(128)}).strict().parse(req.body);
   const u=store.db.prepare('SELECT * FROM business_users WHERE login=?').get(v.login);
+  if(!u){const staff=await team.authenticate(v.login,v.password);if(!staff)throw new AppError('INVALID_LOGIN','Неверный логин или пароль.',401);await team.issue(staff,reply);return {ok:true};}
   if(!await passwordMatches(v.password,u?.password_hash||dummyHash)||!u||store.db.prepare('SELECT password_hash FROM business_users WHERE id=?').get(u.id)?.password_hash!==u.password_hash)throw new AppError('INVALID_LOGIN','Неверный логин или пароль.',401);
   await issue(u,reply);return {ok:true};
  });
- app.post('/auth/logout',{preHandler:member},async(req,reply)=>{store.db.prepare('DELETE FROM business_sessions WHERE hash=?').run(hash(req.cookies.mb_session||''));reply.clearCookie('mb_session',{path:'/'});return {ok:true};});
+ app.post('/auth/logout',{preHandler:member},async(req,reply)=>{store.db.prepare('DELETE FROM business_sessions WHERE hash=?').run(hash(req.cookies.mb_session||''));team.logout(req.cookies.mb_session);reply.clearCookie('mb_session',{path:'/'});return {ok:true};});
  app.post('/account/password',{preHandler:member,...limits},async(req,reply)=>{
   const v=z.object({current_password:z.string().min(1).max(128),password:passwordSchema}).strict().parse(req.body);
+  if(!req.member.is_owner)return team.ownPassword(req,reply,v);
   const u=store.db.prepare('SELECT * FROM business_users WHERE id=?').get(req.member.id);
   if(!await passwordMatches(v.current_password,u.password_hash))throw new AppError('INVALID_LOGIN','Текущий пароль неверен.',401);
   const digest=await passwordHash(v.password);store.transaction(()=>{store.db.prepare('UPDATE business_users SET password_hash=? WHERE id=?').run(digest,u.id);store.db.prepare('DELETE FROM business_sessions WHERE user_id=?').run(u.id);});await issue(u,reply);return {ok:true};
  });
  app.get('/account/overview',{preHandler:member},async req=>{
-  const id=req.company.id;return {tariff_payments:store.tariffs.orders(id),billing_cashier_available:store.tariffs.overview().enabled&&store.tariffs.overview().connected,user:{login:req.member.login},company:store.merchantPublic(req.company),mode:config.mode,capabilities:driver.capabilities(),billing:business.snapshot(id),plans:[...plans,...(business.offer(id)?[business.offer(id)]:[])],
-   invoices:store.listInvoices(id,200).map(i=>store.invoicePublic(i)),
-   stats:store.db.prepare('SELECT status,COUNT(*) count,SUM(amount) amount FROM invoices WHERE merchant_id=? GROUP BY status').all(id),
-   daily:store.db.prepare('SELECT created_at,amount,status FROM invoices WHERE merchant_id=? AND created_at>=? ORDER BY created_at').all(id,now()-7*86400000),
-   ledger:store.db.prepare('SELECT * FROM business_ledger WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100').all(id),
-   topups:store.db.prepare('SELECT id,amount,status,created_at,reviewed_at FROM business_topups WHERE merchant_id=? ORDER BY created_at DESC LIMIT 30').all(id),
-   events:store.db.prepare('SELECT id,invoice_id,attempts,delivered_at,last_error,dead FROM events WHERE merchant_id=? ORDER BY next_at DESC LIMIT 50').all(id)};
+  const id=req.company.id;return {tariff_payments:req.member.is_owner?store.tariffs.orders(id):[],service_balance:req.member.is_owner?serviceWallet.wallet(id):null,billing_cashier_available:req.member.is_owner&&store.tariffs.overview().enabled&&store.tariffs.overview().connected,user:{id:req.member.id,login:req.member.login,name:req.member.name||req.member.login,role:req.member.role,permissions:req.member.permissions,is_owner:req.member.is_owner},company:store.merchantPublic(req.company),mode:config.mode,capabilities:driver.capabilities(),billing:business.snapshot(id),plans:[...plans,...(business.offer(id)?[business.offer(id)]:[])],
+   invoices:req.member.is_owner?store.listInvoices(id,200).map(i=>store.invoicePublic(i)):[],
+   stats:!req.member.is_owner?[]:store.db.prepare('SELECT status,COUNT(*) count,SUM(amount) amount FROM invoices WHERE merchant_id=? GROUP BY status').all(id),
+   daily:!req.member.is_owner?[]:store.db.prepare('SELECT created_at,amount,status FROM invoices WHERE merchant_id=? AND created_at>=? ORDER BY created_at').all(id,now()-7*86400000),
+   ledger:!req.member.is_owner?[]:store.db.prepare('SELECT * FROM business_ledger WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100').all(id),
+   topups:!req.member.is_owner?[]:store.db.prepare('SELECT id,amount,status,created_at,reviewed_at FROM business_topups WHERE merchant_id=? ORDER BY created_at DESC LIMIT 30').all(id),
+   events:!req.member.is_owner?[]:store.db.prepare('SELECT id,invoice_id,attempts,delivered_at,last_error,dead FROM events WHERE merchant_id=? ORDER BY next_at DESC LIMIT 50').all(id)};
  });
  app.post('/account/topups',{preHandler:member},async()=>{throw new AppError('TOPUPS_DISABLED','Пополнение баланса отключено. Оплачивайте тариф напрямую.',410);});
  app.post('/account/subscription',{preHandler:member},async()=>{throw new AppError('DIRECT_PAYMENT_REQUIRED','Оплачивайте тариф через /account/subscription-orders.',410);});

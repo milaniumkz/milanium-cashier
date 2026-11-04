@@ -18,6 +18,7 @@ export function loadConfig(env = process.env) {
   const trustedProxyIps=(env.TRUSTED_PROXY_IPS||'').split(',').map(v=>v.trim()).filter(Boolean);
   if(trustedProxyIps.some(ip=>!normalizeIp(ip)))throw new Error('TRUSTED_PROXY_IPS must contain exact proxy IP addresses, not CIDR, hostnames or wildcards.');
   return {
+    operatorProfile:env.MBUSINESS_OPERATOR_PROFILE_BASE64?JSON.parse(Buffer.from(env.MBUSINESS_OPERATOR_PROFILE_BASE64,'base64').toString('utf8')):undefined,
     accountingUrl:env.ACCOUNTING_URL||'',accountingBridgeSecret:env.ACCOUNTING_BRIDGE_SECRET||'',accountingWebRoot:env.ACCOUNTING_WEB_ROOT||'',
     production, mode, key, trustedProxyIps, kaspiApp: Object.fromEntries(Object.entries(env).filter(([name]) => name.startsWith('APP_'))), adminPassword: env.ADMIN_PASSWORD,
     baseUrl: base.origin, host: env.HOST || '127.0.0.1', port: Number(env.PORT || 3080),

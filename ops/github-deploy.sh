@@ -159,6 +159,19 @@ if(current!==url){
 }
 if(!/^PORT=3181$/m.test(text)||!/^DATA_DIR=\/srv\/mbusiness\/shared\/data$/m.test(text))throw new Error('Unexpected existing data/port configuration');
 JSENV
+profile_file="${archive%/*}/operator-profile.base64"
+if [[ "$mode" == deploy && -f "$profile_file" && ! -L "$profile_file" ]]; then
+  "$runtime/bin/node" --input-type=module - "$root/shared/.env" "$profile_file" <<'JSPROFILE'
+import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+const [envFile,profileFile]=process.argv.slice(2),encoded=readFileSync(profileFile,'utf8').trim();
+if(encoded.length>8192||!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded))throw new Error('Invalid operator profile encoding');
+const p=JSON.parse(Buffer.from(encoded,'base64').toString('utf8'));
+if(typeof p.legal_name!=='string'||!/^(?:\d{12})?$/.test(p.identifier||'')||typeof p.address!=='string'||typeof p.support_email!=='string')throw new Error('Invalid operator profile');
+const source=readFileSync(envFile,'utf8').replace(/^MBUSINESS_OPERATOR_PROFILE_BASE64=.*\n?/gm,'');
+writeFileSync(envFile,source.trimEnd()+'\nMBUSINESS_OPERATOR_PROFILE_BASE64='+encoded+'\n',{mode:0o600});
+unlinkSync(profileFile);
+JSPROFILE
+fi
 if [[ "$mode" == deploy ]]; then
 install -o mbusiness -g mbusiness -m 0600 "$cert" "$root/shared/proxy/tls/fullchain.pem"
 install -o mbusiness -g mbusiness -m 0600 "$cert_key" "$root/shared/proxy/tls/privkey.pem"
