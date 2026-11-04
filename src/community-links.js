@@ -15,4 +15,3 @@ export function normalizeCommunityUrl(input) {
   if (!valid) throw new AppError('COMMUNITY_URL_INVALID', 'Нужна ссылка на страницу группы: https://vk.com/имя или https://ok.ru/group/номер.', 400);
   return { network, url: `https://${network === 'vk' ? 'vk.com' : 'ok.ru'}${network==='vk'?path.replace(/^\/(?:public|event)(\d+)$/,'/club$1'):path}` };
 }
-
