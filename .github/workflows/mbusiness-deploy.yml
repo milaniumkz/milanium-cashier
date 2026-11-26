@@ -110,7 +110,16 @@ jobs:
       - run: npm run package:browser-extension
       - name: Check the published package matches its sources
         run: git diff --exit-code public/mbusiness-browser-extension.zip
-      - run: npx playwright-core install chromium
+      - name: Install Chromium for the extension smoke test
+        run: |
+          if ! npx playwright-core install chromium --no-shell; then
+            chrome_version=$(node -p "require('./node_modules/playwright-core/browsers.json').browsers.find(browser => browser.name === 'chromium').browserVersion")
+            curl --fail --silent --show-error --retry 3 --location \
+              "https://storage.googleapis.com/chrome-for-testing-public/$chrome_version/linux64/chrome-linux64.zip" \
+              -o "$RUNNER_TEMP/chrome-linux64.zip"
+            unzip -q "$RUNNER_TEMP/chrome-linux64.zip" -d "$RUNNER_TEMP"
+            echo "CHROMIUM_PATH=$RUNNER_TEMP/chrome-linux64/chrome" >> "$GITHUB_ENV"
+          fi
       - run: npm run test:extension
         env:
           SCREENSHOTS_DIR: /tmp/mbusiness-extension-screens
