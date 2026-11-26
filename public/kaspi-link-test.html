@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Проверка ссылки Kaspi · MBusiness</title>
+  <link rel="stylesheet" href="/assets/business.css">
+  <script src="/assets/kaspi-link-test.js" type="module"></script>
+</head>
+<body class="docs-body">
+  <header class="docs-header"><a href="/" class="logo"><span class="logo-mark">M</span>MBusiness</a></header>
+  <main class="docs-content">
+    <h1>Проверка ссылки Kaspi</h1>
+    <p><a href="/#cashier" class="secondary" target="_blank" rel="noopener">Подключить кассира или войти в MBusiness ↗</a></p>
+    <p id="connection" role="status">Проверяем подключение кассира…</p>
+    <button id="check" class="secondary" type="button">Проверить подключение</button>
+    <form id="invoice" class="panel form-card" hidden>
+      <label>Сумма, ₸<input name="amount" type="number" min="1" max="99999999" step="1" required></label>
+      <p>Будет выставлен реальный счёт. Для проверки открытия ссылки не подтверждайте оплату.</p>
+      <button class="primary" type="submit">Создать счёт и получить ссылку</button>
+    </form>
+    <p id="status" role="status"></p>
+    <button id="retry" class="secondary" type="button" hidden>Проверить счёт</button>
+    <section id="result" class="panel form-card" hidden>
+      <h2>Ссылка от Kaspi</h2>
+      <label>Платёжная ссылка<input id="payment-link" readonly></label>
+      <p class="actions">
+        <a id="open" class="primary">Открыть ссылку</a>
+        <button id="copy" class="secondary" type="button">Скопировать</button>
+        <button id="share" class="secondary" type="button" hidden>Поделиться</button>
+      </p>
+      <a id="qr" class="secondary" target="_blank" rel="noopener" hidden>Показать QR</a>
+    </section>
+  </main>
+</body>
+</html>

@@ -214,7 +214,7 @@ export async function buildApp(config, options = {}) {
     });
   }
   const serve = async (file, reply) => reply.type(file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8').send(await readFile(path.join(directory, '../public', file)));
-  const assets = new Set(['app.js', 'checkout.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'publishing-web.js', 'browser-publisher.js', 'ai.js', 'privacy.js', 'social-callback.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
+  const assets = new Set(['app.js', 'checkout.js', 'kaspi-link-test.js', 'style.css', 'business.js', 'company-setup.js', 'team.js', 'social.js', 'publishing.js', 'publishing-web.js', 'browser-publisher.js', 'ai.js', 'privacy.js', 'social-callback.js', 'social.css', 'social-connect.js', 'social-platform.js', 'accounting-frame.js', 'retail.js', 'retail-equipment.js', 'retail-fiscal.js', 'retail-sales.js', 'retail-shifts.js', 'retail-shared.js', 'retail-device.js', 'retail.css', 'business.css', 'cashier-guide.css', 'docs.js', 'favicon.svg']);
   app.get('/assets/:file', async (req, reply) => {
     if (!assets.has(req.params.file)) throw new AppError('NOT_FOUND', 'Файл не найден.', 404);
     return serve(req.params.file, reply);
@@ -223,6 +223,7 @@ export async function buildApp(config, options = {}) {
   app.get('/store-count',(_,reply)=>serve('store-count.html',reply));
   app.get('/favicon.ico', (_,reply)=>reply.code(204).send());
   app.get('/', (_, reply) => serve('business.html', reply));
+  app.get('/kaspi-link-test', (_, reply) => serve('kaspi-link-test.html', reply));
   app.get('/operator', (_, reply) => serve('index.html', reply));
   app.get('/downloads/mbusiness-browser-extension.zip',async(_,reply)=>reply.header('Content-Disposition','attachment; filename=mbusiness-browser-extension.zip').type('application/zip').send(await readFile(path.join(directory,'../public/mbusiness-browser-extension.zip'))));
   app.get('/help/browser-publisher',(_,reply)=>serve('browser-publisher-guide.html',reply));
